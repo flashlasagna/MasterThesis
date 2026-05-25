@@ -202,11 +202,12 @@ def main():
 
         for h in [hh for hh in horizons if hh > 1]:
             print(f"\n  h={h}:")
-            # Direct method: h-period holding return as target
+            # Direct method: h-period holding return aligned with X_t,
+            # which carries information from t-1 after the pipeline lag.
             y_h = np.full(T, np.nan)
-            for t_idx in range(T - h):
+            for t_idx in range(T - h + 1):
                 y_h[t_idx] = 100.0 * (
-                    np.prod(1.0 + y[t_idx+1:t_idx+h+1] / 100.0) - 1.0)
+                    np.prod(1.0 + y[t_idx:t_idx+h] / 100.0) - 1.0)
             valid     = ~np.isnan(y_h)
             y_h_valid = y_h[valid]
             X_valid   = X[valid]

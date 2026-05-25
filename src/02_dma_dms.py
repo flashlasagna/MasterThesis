@@ -290,60 +290,62 @@ def run_dma_dms(y: np.ndarray,
         # x_all[m, j] = x_full[j] if model m includes covariate j, else 0
         x_all = np.where(inclusion, x_full[None, :], 0.0)  # (M, k+1)
 
-        # ── Prediction step (all models) ──────────────────────────────────
+        # ── Prediction step (all models) — uses beta and pi from t-1 only ─
         P_pred    = P_all / lam                                    # (M, k+1)
         y_hat_all = (x_all * beta_all).sum(axis=1)                 # (M,)
-        u_hat_all = y_t - y_hat_all                                # (M,)
-        F_all     = (x_all**2 * P_pred).sum(axis=1) + H_all       # (M,)
 
-        # ── Normal predictive log-likelihood (numerically stable) ─────────
-        log_f = -0.5 * (np.log(2.0 * np.pi * np.maximum(F_all, 1e-12))
-                        + u_hat_all**2 / np.maximum(F_all, 1e-12))
-        log_f -= log_f.max()  # subtract max for stability
-        f_N   = np.exp(log_f)
-
-        # ── Model probability update ──────────────────────────────────────
+        # Predicted (prior) model probabilities — pure forgetting, no y_t
         pi_pred = pi_all**alpha
         pi_pred /= pi_pred.sum()
 
-        pi_all = pi_pred * f_N
-        pi_all /= pi_all.sum()
-
-        # ── TVP prediction step ───────────────────────────────────────────
+        # ── TVP prediction step (also pre-update) ─────────────────────────
         P_tvp_pred = P_tvp / lam
         y_hat_tvp  = float(x_full @ beta_tvp)
-        u_hat_tvp  = y_t - y_hat_tvp
-        F_tvp      = float(x_full @ P_tvp_pred @ x_full) + H_tvp
-        G_tvp      = P_tvp_pred @ x_full / F_tvp
-        beta_tvp   = beta_tvp + G_tvp * u_hat_tvp
-        P_tvp      = P_tvp_pred - np.outer(G_tvp, x_full) @ P_tvp_pred
-        H_tvp      = kappa * H_tvp + (1 - kappa) * u_hat_tvp**2
 
-        # ── Record OOS forecasts (post burn-in) ───────────────────────────
+        # ── Record OOS forecasts BEFORE observing y_t (no look-ahead) ─────
         if t >= n_insample:
-            # DMA: probability-weighted average of all model forecasts
-            dma_fc[oos_idx] = float(pi_all @ y_hat_all)
+            # DMA: weighted average using prior (predicted) probabilities
+            dma_fc[oos_idx] = float(pi_pred @ y_hat_all)
 
-            # DMS: forecast from highest-probability model
-            best_m = int(np.argmax(pi_all))
+            # DMS: highest-prior-probability model
+            best_m = int(np.argmax(pi_pred))
             dms_fc[oos_idx] = float(y_hat_all[best_m])
 
-            # TVP: full model forecast
+            # TVP: full model forecast (uses beta_tvp from t-1)
             tvp_fc[oos_idx] = y_hat_tvp
 
             # Historical average (mean of y up to t, excluding t)
             ha_fc[oos_idx] = float(y[:t].mean()) if t > 0 else 0.0
 
-            # DMA-weighted coefficients: beta_dma[j] = sum_m pi[m]*beta[m,j]*incl[m,j]
-            beta_dma_path[oos_idx] = (pi_all[:, None] * beta_all * inclusion).sum(axis=0)
-
-            # PIP[j] = sum_m pi[m] * inclusion[m, j+1]
-            pip_path[oos_idx] = (pi_all[:, None] * inclusion[:, 1:]).sum(axis=0)
+            # DMA-averaged coefficients and PIPs use prior weights
+            beta_dma_path[oos_idx] = (pi_pred[:, None] * beta_all * inclusion).sum(axis=0)
+            pip_path[oos_idx]      = (pi_pred[:, None] * inclusion[:, 1:]).sum(axis=0)
 
             oos_idx += 1
 
-        # ── Kalman update (all models) ────────────────────────────────────
-        # Gain: G[m,j] = P_pred[m,j] * x[m,j] / F[m]
+        # ── NOW observe y_t and run the posterior updates ─────────────────
+        u_hat_all = y_t - y_hat_all                                # (M,)
+        F_all     = (x_all**2 * P_pred).sum(axis=1) + H_all        # (M,)
+
+        # Normal predictive log-likelihood (numerically stable)
+        log_f = -0.5 * (np.log(2.0 * np.pi * np.maximum(F_all, 1e-12))
+                        + u_hat_all**2 / np.maximum(F_all, 1e-12))
+        log_f -= log_f.max()  # subtract max for stability
+        f_N   = np.exp(log_f)
+
+        # Posterior model probabilities
+        pi_all = pi_pred * f_N
+        pi_all /= pi_all.sum()
+
+        # TVP posterior update
+        u_hat_tvp = y_t - y_hat_tvp
+        F_tvp     = float(x_full @ P_tvp_pred @ x_full) + H_tvp
+        G_tvp     = P_tvp_pred @ x_full / F_tvp
+        beta_tvp  = beta_tvp + G_tvp * u_hat_tvp
+        P_tvp     = P_tvp_pred - np.outer(G_tvp, x_full) @ P_tvp_pred
+        H_tvp     = kappa * H_tvp + (1 - kappa) * u_hat_tvp**2
+
+        # Kalman update for all models
         G_all     = P_pred * x_all / np.maximum(F_all[:, None], 1e-12)
         beta_all  = beta_all + G_all * u_hat_all[:, None]
         P_all     = P_pred - G_all * x_all * P_pred
@@ -454,12 +456,13 @@ def run_dma_multihorizon(y: np.ndarray,
             print(f"Horizon h={h}")
             print(f"{'='*55}")
 
-        # h-period holding return: 100*(S_{t+h}/S_t - 1)
-        # Since y contains simple monthly returns, compound them:
-        # r^h_t = 100 * (prod_{j=1}^{h} (1 + r_{t+j}/100) - 1)
+        # h-period holding return aligned with X_t (which carries info from t-1):
+        # y_h[t] = 100 * (prod_{j=0}^{h-1} (1 + r_{t+j}/100) - 1)
+        # For h=1 this collapses to y_h[t] = y[t], matching the single-horizon
+        # convention. The last (h-1) rows are NaN and dropped via `valid`.
         y_h = np.full(T, np.nan)
-        for t in range(T - h):
-            compound = np.prod(1.0 + y[t+1:t+h+1] / 100.0) - 1.0
+        for t in range(T - h + 1):
+            compound = np.prod(1.0 + y[t:t+h] / 100.0) - 1.0
             y_h[t] = 100.0 * compound
 
         # Direct method: align X_t with y^h_{t} (target is h steps ahead)
