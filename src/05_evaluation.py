@@ -645,18 +645,23 @@ def plot_f8_r2_barchart(dma_result, ml_results: dict,
     with plt.rc_context(THESIS_STYLE):
         fig, ax = plt.subplots(figsize=(12, 5))
 
-        # Draw positive bars
-        bars = ax.bar(names, [max(v, 0) for v in r2vals],
-                      color=colors, edgecolor='white', linewidth=0.5, zorder=2)
+        # Draw bars with their true sign so negative R² extends below zero
+        ax.bar(names, r2vals,
+               color=colors, edgecolor='white', linewidth=0.5, zorder=2)
 
         ax.axhline(0, color='black', lw=0.8)
         ax.set_ylabel('Out-of-Sample R²')
-        ax.set_ylim(min(r2vals) - 0.05, max(r2vals) + 0.08)
+        lo = min(min(r2vals), 0.0) - 0.05
+        hi = max(max(r2vals), 0.0) + 0.08
+        ax.set_ylim(lo, hi)
 
-        # Value labels on top of bars
+        # Value labels: above the bar for non-negative R², below it otherwise
         for i, (name, v) in enumerate(zip(names, r2vals)):
-            ypos = max(v, 0) + 0.01
-            ax.text(i, ypos, f'{v:.2f}', ha='center', va='bottom',
+            if v >= 0:
+                ypos, va = v + 0.01, 'bottom'
+            else:
+                ypos, va = v - 0.01, 'top'
+            ax.text(i, ypos, f'{v:.2f}', ha='center', va=va,
                     fontsize=8, fontweight='bold' if name == 'DMA' else 'normal')
 
         # Legend

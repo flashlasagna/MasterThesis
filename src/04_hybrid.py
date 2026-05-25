@@ -178,9 +178,10 @@ def run_pip_weighted_elasticnet(
         3. Fit ElasticNet on the weighted predictor matrix.
 
     The PIP values are derived from the DMA prediction-step probabilities
-    (pi_{t|t-1}), which are computed BEFORE observing y_t. There is
-    therefore no lookahead bias: PIP_i reflects information available at
-    the time the forecast is made.
+    (pi_{t|t-1}), which are computed in 02_dma_dms.py BEFORE observing y_t
+    and stored in `pip_path`. PIP_i therefore reflects only information
+    available at the time the forecast for month t = n_insample + i is made.
+    The hybrid weighting inherits this prospective alignment.
 
     For in-sample training rows, we use pip_path[0] (the PIP vector at the
     first OOS step, i.e. the end of the burn-in period) as a conservative

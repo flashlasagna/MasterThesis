@@ -249,6 +249,22 @@ def _monthly_mean(df, col):
               .reset_index())
 
 
+def _monthly_last(df, col):
+    """Resample daily series to month-end close (snapped to month-start label).
+
+    Using the last observation in the month avoids Working's (1960) time-
+    aggregation bias: returns built from monthly averages inherit artificial
+    positive autocorrelation and damped volatility from the smoothing window.
+    Close-to-close returns reflect tradeable market moves.
+    """
+    s = (df.set_index('date')[col]
+            .resample('ME').last())          # month-end timestamps
+    s.index = s.index.values.astype('datetime64[M]')  # snap to month-start label
+    out = s.reset_index()
+    out.columns = ['date', col]
+    return out
+
+
 def _snap_to_month_start(df):
     """Snap an already-monthly series to month-start timestamps."""
     df = df.copy()
@@ -261,10 +277,11 @@ def _aggregate_monthly(raw, ibor):
     Aggregate all raw series to monthly and merge into one panel.
     Daily price/index series use monthly mean (consistent with the paper).
     """
-    # Daily series -> monthly mean
-    daily_cols = ['spot', 'fwd3m', 'gold', 'spx', 'vix', 'wti', 'bdi',
+    # Daily price/index series -> month-end last (avoids Working's effect on returns)
+    last_cols  = ['spot', 'fwd3m', 'gold', 'spx', 'vix', 'wti', 'bdi',
                   'inv', 'alcoa', 'bhp', 'fcx', 'rio', 'audusd', 'usdclp']
-    monthly = {col: _monthly_mean(raw[col], col) for col in daily_cols}
+    monthly = {col: _monthly_last(raw[col], col) for col in last_cols}
+    # Interbank rate kept as monthly mean (a level, not a return basis)
     monthly['ibor'] = _monthly_mean(ibor, 'ibor')
 
     # Monthly series -> snap to month-start
@@ -325,8 +342,13 @@ def _build_features(panel):
     # Target: monthly copper spot return
     df['r_copper'] = _pct_return(df['spot'])
 
-    # 1. Lagged copper return (momentum)
-    df['x_r_copper_lag'] = df['r_copper'].shift(1)
+    # Build all 18 predictors at their CONCURRENT month-t value first.
+    # A uniform one-month lag is applied at the end of this function so that
+    # X_t represents information available at the close of month t-1 — the
+    # correct alignment for a one-step-ahead forecast of y_t.
+
+    # 1. Lagged copper return (momentum) — current return; will be lagged below
+    df['x_r_copper_lag'] = df['r_copper']
 
     # 2 & 3. Excess demand and inventory changes
     df['_demand']      = df['cons'] - (df['prod'] + df['inv'])
@@ -379,6 +401,14 @@ def _build_features(panel):
 
     # 18. BHP Billiton return
     df['x_dBHP'] = _pct_return(df['bhp'])
+
+    # Apply uniform one-month lag to every predictor so X_t carries only
+    # information observable at the end of month t-1. Without this shift,
+    # contemporaneous regressors (e.g. month-t S&P 500 return, month-t VIX)
+    # leak future information into the h=1 forecast of y_t and the model
+    # becomes explanatory rather than predictive.
+    for col in PREDICTOR_COLS:
+        df[col] = df[col].shift(1)
 
     return df
 
