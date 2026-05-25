@@ -586,7 +586,8 @@ def print_pip_summary(result: DMAResult,
 
 if __name__ == '__main__':
     import sys
-    sys.path.insert(0, '/home/claude/thesis')
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from src.pipeline import build_dataset, PREDICTOR_COLS
 
     data_dir = sys.argv[1] if len(sys.argv) > 1 else '/mnt/user-data/uploads/'

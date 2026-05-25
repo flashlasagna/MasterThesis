@@ -1,0 +1,7 @@
+Model,MSFE,Rel. MSFE,R²_oos (%),CW-stat,p-value,Description
+Random Walk (RW),33.5463,1.0,—,—,—,Driftless RW benchmark
+DMA,9.1698,0.2733,72.6654,3.8644,0.0001,Dynamic Model Averaging
+ElasticNet,11.8894,0.3544,64.5582,3.9287,0.0,Best standalone ML model
+PIP_ElasticNet,10.5484,0.3144,68.5556,4.2576,0.0,DMA PIPs as soft variable weights → ElasticNet
+Stacking,10.3937,0.3098,69.0169,3.8404,0.0001,Ridge meta-learner on DMA + ElasticNet forecasts
+Combo_DMA_EN,10.0449,0.2994,70.0565,3.9114,0.0,Equal-weight average: 0.5×DMA + 0.5×ElasticNet

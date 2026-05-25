@@ -548,7 +548,8 @@ def print_hybrid_descriptions(hybrid_results: dict) -> None:
 
 if __name__ == '__main__':
     import sys
-    sys.path.insert(0, '/home/claude/thesis')
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from src.pipeline import build_dataset, PREDICTOR_COLS
     from src.dma_dms import run_dma_dms
     from src.ml_models import run_all_ml_models
