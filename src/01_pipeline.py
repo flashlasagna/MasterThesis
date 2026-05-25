@@ -278,9 +278,14 @@ def _aggregate_monthly(raw, ibor):
     Daily price/index series use monthly mean (consistent with the paper).
     """
     # Daily price/index series -> month-end last (avoids Working's effect on returns)
-    last_cols  = ['spot', 'fwd3m', 'gold', 'spx', 'vix', 'wti', 'bdi',
+    # spot and fwd3m use monthly averages following Buncic & Moretto (2014),
+    # who explicitly state they use monthly average LME prices as the target.
+    # All other price series use month-end close to avoid Working's Effect.
+    mean_cols = ['spot', 'fwd3m']
+    last_cols  = ['gold', 'spx', 'vix', 'wti', 'bdi',
                   'inv', 'alcoa', 'bhp', 'fcx', 'rio', 'audusd', 'usdclp']
-    monthly = {col: _monthly_last(raw[col], col) for col in last_cols}
+    monthly = {col: _monthly_mean(raw[col], col) for col in mean_cols}
+    monthly.update({col: _monthly_last(raw[col], col) for col in last_cols})
     # Interbank rate kept as monthly mean (a level, not a return basis)
     monthly['ibor'] = _monthly_mean(ibor, 'ibor')
 
