@@ -5,7 +5,7 @@
 
 **Author:** Ruben Mimouni  
 **Supervisor:** Prof. Cho  
-**Date:** August 2025
+**Semester:** Spring 2026
 
 ---
 
@@ -106,17 +106,17 @@ Put all 22 `.xlsx` files in the `data/` folder.
 
 ### 3. Run the pipeline
 
-**Fast run** (~5–7 minutes, skips LSTM and multi-horizon):
+**Fast run** (skips LSTM and multi-horizon):
 ```bash
 python main.py --data data/ --output output/ --skip_lstm --skip_mh
 ```
 
-**Full run** (~20–25 minutes, includes multi-horizon h=2,3,6):
+**Full run** (includes multi-horizon h=2,3,6):
 ```bash
 python main.py --data data/ --output output/
 ```
 
-**Full run with LSTM** (~45–60 minutes):
+**Full run with LSTM**:
 ```bash
 python main.py --data data/ --output output/ --horizons 1,2,3,6
 ```
@@ -249,16 +249,12 @@ This project was developed as a Master's thesis for the MSc Finance programme at
 ## Acknowledgements
 
 - **Prof. Cho** for supervision and guidance
-- **Anthropic Claude** for development assistance
+- **Anthropic Claude**, **Google Gemini** for development assistance
 
 ---
 
 ## Licence
 
-Academic use only. Submitted in partial fulfilment of the requirements for the Master of Science in Finance degree, HEC Lausanne, August 2025.
+Submitted in partial fulfilment of the requirements for the Master of Science in Finance degree, HEC Lausanne, August 2025.
 
 ---
-
-<p align="center">
-  <i>Built with ☕ in Lausanne, Switzerland</i>
-</p>
