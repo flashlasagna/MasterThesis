@@ -129,7 +129,8 @@ def _ensure_dir(path: str) -> str:
 def _save_fig(fig, path: str, tight: bool = True) -> None:
     if tight:
         plt.tight_layout()
-    fig.savefig(path, dpi=150, bbox_inches='tight')
+    path = os.path.splitext(path)[0] + '.pdf'   # force PDF regardless of caller
+    fig.savefig(path, bbox_inches='tight')      # dpi irrelevant for vector PDF
     plt.close(fig)
     print(f"    Saved: {path}")
 

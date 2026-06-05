@@ -434,8 +434,8 @@ def make_table10_correlation(df: pd.DataFrame,
                 ax.set_title('Figure A10: Predictor Correlation Matrix '
                              '(March 1998 – February 2026)', fontsize=10)
                 plt.tight_layout()
-                path = os.path.join(output_dir, 'F11_predictor_corr_heatmap.png')
-                fig.savefig(path, dpi=150, bbox_inches='tight')
+                path = os.path.join(output_dir, 'F11_predictor_corr_heatmap.pdf')
+                fig.savefig(path, bbox_inches='tight')
                 plt.close(fig)
                 print(f"    Saved: {path}")
         except Exception as e:

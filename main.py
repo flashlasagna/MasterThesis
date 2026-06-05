@@ -289,7 +289,7 @@ def main():
     print(f"    Random Walk       :   0.00%  (benchmark)")
     print()
     print("  Tables saved  : T1–T6 (.csv)")
-    print("  Figures saved : F1–F10 (.png)")
+    print("  Figures saved : F1–F10 (.pdf)")
 
 
 # ---------------------------------------------------------------------------
