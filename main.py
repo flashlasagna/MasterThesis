@@ -60,6 +60,7 @@ from src.dma_dms     import (run_dma_dms, run_dma_multihorizon,
 from src.ml_models   import run_all_ml_models, print_ml_table
 from src.hybrid      import run_all_hybrids, print_hybrid_table
 from src.evaluation  import run_full_evaluation
+from src.extensions  import run_all_extensions
 
 import numpy as np
 import pandas as pd
@@ -80,6 +81,8 @@ def parse_args():
                    help='Skip multi-horizon forecasting (h=2,3,6) to save time')
     p.add_argument('--skip_lstm', action='store_true',
                    help='Skip LSTM model (requires PyTorch; slow on CPU)')
+    p.add_argument('--skip_sensitivity', action='store_true',
+                   help='Skip the T8 forgetting-factor grid (the only heavy extension)')
     p.add_argument('--horizons',  default='1,2,3,6',
                    help='Comma-separated forecast horizons (default: 1,2,3,6)')
     return p.parse_args()
@@ -252,6 +255,23 @@ def main():
         n_insample=n_insample,
         output_dir=output_dir,
         dma_mh_results=dma_mh_results,
+    )
+    print(f"  Elapsed: {_elapsed(t0)}")
+
+    # -- Step 8: Tier-1 extensions (T7-T10) -----------------------------------
+    _step(8, "Tier-1 extensions: DM-HLN, sensitivity, directional, correlation")
+    t0 = time.time()
+    run_all_extensions(
+        df=df,
+        predictor_cols=PREDICTOR_COLS,
+        dma_result=dma_result,
+        ml_results=ml_results,
+        hybrid_results=hybrid_results,
+        y=y, X=X,
+        n_insample=n_insample,
+        output_dir=output_dir,
+        run_sensitivity=not args.skip_sensitivity,
+        dates=dates,
     )
     print(f"  Elapsed: {_elapsed(t0)}")
 

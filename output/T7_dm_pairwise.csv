@@ -1,0 +1,7 @@
+Model A,Model B,Mean loss diff (A-B),HLN stat,p-value,Lower MSFE,Significant 5%
+DMA,Ridge,-0.21997,-0.1708,0.8645,DMA,no
+DMA,ElasticNet,-0.38844,-0.293,0.7698,DMA,no
+DMA,Combo,0.33138,0.5071,0.6126,Combo,no
+Ridge,ElasticNet,-0.16846,-0.3679,0.7133,Ridge,no
+Ridge,Combo,0.55135,0.7599,0.4482,Combo,no
+ElasticNet,Combo,0.71981,1.0558,0.2922,Combo,no
