@@ -51,6 +51,7 @@ import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
+import math
 
 warnings.filterwarnings("ignore")
 
@@ -422,6 +423,25 @@ def make_table6(dma_result, ml_results: dict,
 # FIGURE GENERATORS
 # ---------------------------------------------------------------------------
 
+PREDICTOR_GROUPS = [
+    # (suffix, group title, indices, ncols)
+    ('a', 'Fundamental Variables',            list(range(0, 7)),   4),
+    ('b', 'Financial Variables',              list(range(7, 12)),  3),
+    ('c', 'FX & Mining Stock Variables',      list(range(12, 18)), 3),
+]
+
+
+def _grouped_grid(n_panels: int, ncols: int, panel_w=4.0, panel_h=2.2):
+    """Create a fig/axes grid sized to the number of panels, hiding unused axes."""
+    nrows = math.ceil(n_panels / ncols)
+    fig, axes = plt.subplots(nrows, ncols,
+                             figsize=(panel_w * ncols, panel_h * nrows),
+                             sharex=True)
+    axes_flat = np.atleast_1d(axes).flatten()
+    for ax in axes_flat[n_panels:]:
+        ax.set_visible(False)
+    return fig, axes_flat, nrows
+
 def plot_f1_copper(df: pd.DataFrame, dates: pd.DatetimeIndex,
                    output_dir: str) -> None:
     """F1: Copper spot price and monthly returns."""
@@ -451,28 +471,31 @@ def plot_f1_copper(df: pd.DataFrame, dates: pd.DatetimeIndex,
 
 
 def plot_f2_predictor_grid(df: pd.DataFrame, dates: pd.DatetimeIndex,
-                            predictor_cols: list, output_dir: str) -> None:
-    """F2: All 18 predictor time series in a 3×6 grid."""
+                           predictor_cols: list, output_dir: str) -> None:
+    """F2a–c: Predictor time series, one figure per predictor category."""
     with plt.rc_context(THESIS_STYLE):
-        fig, axes = plt.subplots(3, 6, figsize=(18, 8), sharex=True)
-        axes_flat = axes.flatten()
+        for suffix, group_title, idxs, ncols in PREDICTOR_GROUPS:
+            fig, axes_flat, nrows = _grouped_grid(len(idxs), ncols)
 
-        for idx, col in enumerate(predictor_cols):
-            ax = axes_flat[idx]
-            ax.plot(dates, df[col].values, color=COLOURS['actual'],
-                    lw=0.7, alpha=0.85)
-            ax.axhline(0, color=COLOURS['rw'], lw=0.4, ls='--')
-            ax.set_title(PRED_SHORT[idx], fontsize=8, pad=3)
-            ax.tick_params(labelsize=7)
-            if idx >= 12:
-                ax.xaxis.set_major_formatter(mdates.DateFormatter('%y'))
-                ax.xaxis.set_major_locator(mdates.YearLocator(8))
+            for k, j in enumerate(idxs):
+                ax = axes_flat[k]
+                ax.plot(dates, df[predictor_cols[j]].values,
+                        color=COLOURS['actual'], lw=0.7, alpha=0.85)
+                ax.axhline(0, color=COLOURS['rw'], lw=0.4, ls='--')
+                ax.set_title(PRED_SHORT[j], fontsize=8, pad=3)
+                ax.tick_params(labelsize=7)
+                # bottom row of *visible* panels gets date labels
+                if k >= len(idxs) - ncols:
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%y'))
+                    ax.xaxis.set_major_locator(mdates.YearLocator(8))
+                    ax.tick_params(labelbottom=True)
 
-        fig.suptitle(
-            'Figure A1: Time Series of All 18 Predictor Variables'
-            ' (March 1998 – February 2026)',
-            fontsize=11, y=1.01)
-        _save_fig(fig, os.path.join(output_dir, 'F2_predictor_grid.png'))
+            fig.suptitle(
+                f'Figure A1{suffix}: Predictor Time Series — {group_title}'
+                ' (March 1998 – February 2026)',
+                fontsize=11, y=1.01)
+            _save_fig(fig, os.path.join(
+                output_dir, f'F2{suffix}_predictors_{suffix}.pdf'))
 
 
 def plot_f3_actual_predicted(dma_result, ml_results: dict,
@@ -560,59 +583,65 @@ def plot_f5_scatter_dma(dma_result, output_dir: str) -> None:
 
 
 def plot_f6_pip_grid(dma_result, output_dir: str) -> None:
-    """F6: Posterior inclusion probabilities for all 18 predictors."""
+    """F6a–c: Posterior inclusion probabilities, one figure per category."""
     dates_oos = dma_result.dates
     pip       = dma_result.pip_path  # (T_oos, 18)
 
     with plt.rc_context(THESIS_STYLE):
-        fig, axes = plt.subplots(3, 6, figsize=(18, 7),
-                                  sharex=True, sharey=True)
-        axes_flat = axes.flatten()
+        for suffix, group_title, idxs, ncols in PREDICTOR_GROUPS:
+            fig, axes_flat, nrows = _grouped_grid(len(idxs), ncols,
+                                                  panel_h=2.0)
 
-        for j in range(18):
-            ax = axes_flat[j]
-            ax.plot(dates_oos, pip[:, j], color=COLOURS['dma'], lw=0.9)
-            ax.axhline(0.5, color=COLOURS['rw'], lw=0.5, ls='--', alpha=0.7)
-            _add_event_shading(ax, dates_oos, alpha=0.10, label=False)
-            ax.set_title(PRED_SHORT[j], fontsize=8, pad=3)
-            ax.set_ylim(0, 1)
-            ax.tick_params(labelsize=7)
-            if j >= 12:
-                ax.xaxis.set_major_formatter(mdates.DateFormatter('%y'))
-                ax.xaxis.set_major_locator(mdates.YearLocator(6))
+            for k, j in enumerate(idxs):
+                ax = axes_flat[k]
+                ax.plot(dates_oos, pip[:, j], color=COLOURS['dma'], lw=0.9)
+                ax.axhline(0.5, color=COLOURS['rw'], lw=0.5, ls='--', alpha=0.7)
+                _add_event_shading(ax, dates_oos, alpha=0.10, label=False)
+                ax.set_title(PRED_SHORT[j], fontsize=8, pad=3)
+                ax.set_ylim(0, 1)
+                ax.tick_params(labelsize=7)
+                if k >= len(idxs) - ncols:
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%y'))
+                    ax.xaxis.set_major_locator(mdates.YearLocator(6))
+                    ax.tick_params(labelbottom=True)
 
-        fig.suptitle(
-            'Figure A2: Posterior Inclusion Probabilities — DMA'
-            ' (March 2008 – February 2026)',
-            fontsize=11, y=1.01)
-        _save_fig(fig, os.path.join(output_dir, 'F6_pip_grid.png'))
+            fig.suptitle(
+                f'Figure A2{suffix}: Posterior Inclusion Probabilities —'
+                f' {group_title} (March 2008 – February 2026)',
+                fontsize=11, y=1.01)
+            _save_fig(fig, os.path.join(
+                output_dir, f'F6{suffix}_pip_{suffix}.pdf'))
 
 
 def plot_f7_beta_path(dma_result, output_dir: str) -> None:
-    """F7: DMA time-varying coefficient estimates (beta_DMA path)."""
+    """F7a–c: DMA time-varying coefficient estimates, one figure per category."""
     dates_oos = dma_result.dates
-    beta      = dma_result.beta_dma_path  # (T_oos, 19)
+    beta      = dma_result.beta_dma_path  # (T_oos, 19); col 0 = intercept
 
     with plt.rc_context(THESIS_STYLE):
-        fig, axes = plt.subplots(3, 6, figsize=(18, 7), sharex=True)
-        axes_flat = axes.flatten()
+        for suffix, group_title, idxs, ncols in PREDICTOR_GROUPS:
+            fig, axes_flat, nrows = _grouped_grid(len(idxs), ncols,
+                                                  panel_h=2.0)
 
-        for j in range(18):
-            ax = axes_flat[j]
-            ax.plot(dates_oos, beta[:, j+1], color=COLOURS['en'], lw=0.9)
-            ax.axhline(0, color=COLOURS['rw'], lw=0.5, ls='--', alpha=0.7)
-            _add_event_shading(ax, dates_oos, alpha=0.10, label=False)
-            ax.set_title(PRED_SHORT[j], fontsize=8, pad=3)
-            ax.tick_params(labelsize=7)
-            if j >= 12:
-                ax.xaxis.set_major_formatter(mdates.DateFormatter('%y'))
-                ax.xaxis.set_major_locator(mdates.YearLocator(6))
+            for k, j in enumerate(idxs):
+                ax = axes_flat[k]
+                ax.plot(dates_oos, beta[:, j + 1],   # +1 skips intercept
+                        color=COLOURS['en'], lw=0.9)
+                ax.axhline(0, color=COLOURS['rw'], lw=0.5, ls='--', alpha=0.7)
+                _add_event_shading(ax, dates_oos, alpha=0.10, label=False)
+                ax.set_title(PRED_SHORT[j], fontsize=8, pad=3)
+                ax.tick_params(labelsize=7)
+                if k >= len(idxs) - ncols:
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%y'))
+                    ax.xaxis.set_major_locator(mdates.YearLocator(6))
+                    ax.tick_params(labelbottom=True)
 
-        fig.suptitle(
-            'Figure A3: DMA Time-Varying Coefficient Estimates β̂(DMA)'
-            ' (March 2008 – February 2026)',
-            fontsize=11, y=1.01)
-        _save_fig(fig, os.path.join(output_dir, 'F7_beta_path.png'))
+            fig.suptitle(
+                f'Figure A3{suffix}: DMA Time-Varying Coefficients β̂(DMA) —'
+                f' {group_title} (March 2008 – February 2026)',
+                fontsize=11, y=1.01)
+            _save_fig(fig, os.path.join(
+                output_dir, f'F7{suffix}_beta_path_{suffix}.pdf'))
 
 
 def plot_f8_r2_barchart(dma_result, ml_results: dict,
@@ -689,18 +718,19 @@ def plot_f9_crisis_zoom(dma_result, ml_results: dict,
 
     crisis_windows = [
         ('Global Financial Crisis\n(Sep 2008 – Jun 2009)',
-         '2008-06-01', '2009-12-01'),
+         '2008-06-01', '2009-12-01', '2008-09-01', '2009-06-30'),
         ('COVID-19\n(Jan 2020 – Dec 2020)',
-         '2019-10-01', '2021-06-01'),
+         '2019-10-01', '2021-06-01', '2020-01-01', '2020-12-31'),
         ('Ukraine War Shock\n(Jan 2022 – Dec 2022)',
-         '2021-10-01', '2023-06-01'),
+         '2021-10-01', '2023-06-01', '2022-01-01', '2022-12-31'),
     ]
 
     with plt.rc_context(THESIS_STYLE):
         fig, axes = plt.subplots(1, 3, figsize=(15, 4))
 
-        for ax, (title, start, end) in zip(axes, crisis_windows):
-            mask = (dates_oos >= start) & (dates_oos <= end)
+        for ax, (title, start, end, c_start, c_end) in zip(axes, crisis_windows):
+            mask = (dates_oos >= start) & (dates_oos <= end)  # plot
+            c_mask = (dates_oos >= c_start) & (dates_oos <= c_end)  # score
             d    = dates_oos[mask]
             ya   = y_oos[mask]
             yd   = dma_fc[mask]
@@ -720,9 +750,9 @@ def plot_f9_crisis_zoom(dma_result, ml_results: dict,
             plt.setp(ax.xaxis.get_majorticklabels(), rotation=30, ha='right')
 
             # R² annotation
-            if mask.sum() > 2:
-                r2_d = _r2_oos_val(yd, ya)
-                r2_e = _r2_oos_val(en_fc[mask], ya) if en_fc is not None else None
+            if c_mask.sum() > 2:
+                r2_d = _r2_oos_val(dma_fc[c_mask], y_oos[c_mask])
+                r2_e = _r2_oos_val(en_fc[c_mask], y_oos[c_mask]) if en_fc is not None else None
                 txt  = f'DMA R²={r2_d:.2f}'
                 if r2_e is not None:
                     txt += f'\nEN R²={r2_e:.2f}'
