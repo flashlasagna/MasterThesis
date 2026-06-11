@@ -431,7 +431,7 @@ def make_table10_correlation(df: pd.DataFrame,
                                 color='white' if abs(v) > 0.55 else 'black')
                 cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
                 cbar.set_label('Pearson correlation', fontsize=8)
-                ax.set_title('Figure A10: Predictor Correlation Matrix '
+                ax.set_title('Predictor Correlation Matrix '
                              '(March 1998 – February 2026)', fontsize=10)
                 plt.tight_layout()
                 path = os.path.join(output_dir, 'F11_predictor_corr_heatmap.pdf')

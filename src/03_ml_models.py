@@ -303,7 +303,7 @@ def run_lasso(y: np.ndarray, X: np.ndarray, n_insample: int,
 
 def run_elasticnet(y: np.ndarray, X: np.ndarray, n_insample: int,
                    dates: Optional[pd.DatetimeIndex] = None,
-                   verbose: bool = True) -> MLResult:
+                   verbose: bool = True, gap: int = 0) -> MLResult:
     """
     Elastic Net regression (L1 + L2 regularisation).
 
@@ -312,6 +312,11 @@ def run_elasticnet(y: np.ndarray, X: np.ndarray, n_insample: int,
     Inherits LASSO's sparsity while retaining Ridge's grouping property
     (correlated predictors tend to be selected/dropped together).
     Both alpha and rho are tuned jointly via TimeSeriesSplit CV.
+    gap : int
+        Number of most-recent rows excluded from every training set.
+        For h-period overlapping targets set gap = h - 1, so that only
+        targets whose windows have fully completed by the forecast origin
+        enter estimation (prevents overlap-induced lookahead).
     """
     T_oos  = len(y) - n_insample
     fc     = np.zeros(T_oos)
@@ -321,21 +326,21 @@ def run_elasticnet(y: np.ndarray, X: np.ndarray, n_insample: int,
     t0     = time.time()
 
     for i in range(T_oos):
-        t  = n_insample + i
+        t = n_insample + i
+        t_train = t - gap  # last usable training row (exclusive)
         sc = StandardScaler()
-        Xtr = sc.fit_transform(X[:t])
-        Xte = sc.transform(X[t:t+1])
+        Xtr = sc.fit_transform(X[:t_train])
+        Xte = sc.transform(X[t:t + 1])
 
         if i % TUNE_EVERY == 0:
-            tscv  = TimeSeriesSplit(n_splits=3)
-            m_cv  = ElasticNetCV(cv=tscv, max_iter=5000, random_state=42,
-                                 l1_ratio=[0.1, 0.3, 0.5, 0.7, 0.9]).fit(Xtr, y[:t])
-            alpha = float(m_cv.alpha_)
-            l1_r  = float(m_cv.l1_ratio_)
+            tscv = TimeSeriesSplit(n_splits=3)
+            m_cv = ElasticNetCV(cv=tscv, max_iter=5000, random_state=42,
+                                l1_ratio=[0.1, 0.3, 0.5, 0.7, 0.9]).fit(Xtr, y[:t_train])
+            alpha = float(m_cv.alpha_);
+            l1_r = float(m_cv.l1_ratio_)
 
-        m = ElasticNet(alpha=alpha, l1_ratio=l1_r, max_iter=5000).fit(Xtr, y[:t])
+        m = ElasticNet(alpha=alpha, l1_ratio=l1_r, max_iter=5000).fit(Xtr, y[:t_train])
         fc[i] = float(m.predict(Xte)[0])
-        coef_path[i] = np.concatenate([[m.intercept_], m.coef_])
 
     if verbose:
         print(f"  ElasticNet:   R2={_r2_oos(y[n_insample:]-fc, y[n_insample:]):.4f}"

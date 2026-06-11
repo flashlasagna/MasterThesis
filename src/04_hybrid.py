@@ -33,15 +33,16 @@ Hybrid variants
     increase, which is typically beneficial when models have uncorrelated
     errors. This is the Bates-Granger (1969) forecast combination result.
 
-Key finding (reported honestly in the thesis)
+Key findings
 ---------------------------------------------
-No hybrid variant outperforms DMA alone (R2=0.73). The best hybrid is the
-equal-weight DMA+ElasticNet combination (R2=0.70), followed by PIP-weighted
-ElasticNet (R2=0.69). This reflects DMA's advantage: its time-varying
-parameters already adapt to structural breaks in a way that static ML models
-cannot replicate over a short monthly sample. The hybrids are most valuable
-as a robustness demonstration and as a conceptual bridge between the two
-methodological traditions.
+The equal-weight DMA+ElasticNet combination is the single best specification
+(R2_oos = 31.15%), but it improves on DMA alone (30.16%) by only about one
+percentage point. PIP-weighted ElasticNet (29.27%) edges standalone
+ElasticNet (29.01%), and the Ridge meta-learner stack (24.63%) underperforms
+both base models — the forecast combination puzzle (Smith & Wallis, 2009).
+The hybrids therefore confirm the thesis's convergence result rather than
+overturn it: DMA and the regularised linear models share most of their
+information set, leaving little complementary signal to exploit.
 
 References
 ----------
@@ -355,7 +356,7 @@ def run_equal_weight_combination(
     by the Bates-Granger (1969) result that combining forecasts reduces
     variance when constituent forecasts have uncorrelated errors. In practice,
     it is surprisingly difficult to beat even with sophisticated meta-learners
-    — a finding replicated here (Stacking: R2=0.690 vs Combo: R2=0.701).
+    — a finding replicated here (Stacking: R²_oos = 24.63% vs Combo: 31.15%).
 
     This variant is included for two reasons:
     1. It is computationally trivial and fully interpretable.
@@ -421,8 +422,8 @@ def run_all_hybrids(
 
     # Use ElasticNet as the primary ML partner (best ML performer)
     if 'ElasticNet' not in ml_results:
-        raise ValueError("ElasticNet results required in ml_results. "
-                         "Run run_all_ml_models() with include_lstm=False first.")
+        raise ValueError("ElasticNet results missing from ml_results — "
+                         "run run_all_ml_models() before run_all_hybrids().")
     en_fc = ml_results['ElasticNet'].forecasts
 
     if verbose:

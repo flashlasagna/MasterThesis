@@ -5,7 +5,7 @@
 
 **Author:** Ruben Mimouni
 **Supervisor:** Prof. Thomas Cho
-**Submission:** August 2025
+**Submission:** August 2026
 
 ---
 
@@ -15,7 +15,7 @@ This thesis replicates and extends the Dynamic Model Averaging and Selection (DM
 
 **Key findings:**
 - DMA achieves out-of-sample R² = 30.16% (March 2008 – February 2026)
-- Regularised linear ML (Ridge: 29.51%, Elastic Net: 29.01%) converges with DMA once predictors are correctly lagged; pairwise Diebold-Mariano tests cannot distinguish them
+- Regularised linear ML (Ridge: 29.51%, Elastic Net: 29.01%) converges with DMA; pairwise Diebold-Mariano tests cannot distinguish them
 - Equal-weight DMA + Elastic Net combination achieves the best R² of 31.15%, improving on DMA by only one percentage point
 - Tree-based methods lag (Random Forest: 21.23%, XGBoost: 12.54%)
 - Predictability is episodic: R² = 47.95% during the GFC, 37.16% during the Ukraine shock, but only 3.26% post-2023
@@ -82,17 +82,23 @@ MasterThesis/
     ├── T8_ff_sensitivity.csv
     ├── T9_directional.csv
     ├── T10_predictor_corr.csv
-    ├── F1_copper_price_returns.png
-    ├── F2_predictor_grid.png
-    ├── F3_actual_predicted.png
-    ├── F4_cumulative_sfe.png
-    ├── F5_scatter_dma.png
-    ├── F6_pip_grid.png
-    ├── F7_beta_path.png
-    ├── F8_r2_barchart.png
-    ├── F9_crisis_zoom.png
-    ├── F10_lasso_coef_path.png
-    └── F11_predictor_corr_heatmap.png
+    ├── F1_copper_price_returns.pdf
+    ├── F2a_predictors_a.pdf
+    ├── F2b_predictors_b.pdf
+    ├── F2c_predictors_c.pdf
+    ├── F3_actual_predicted.pdf
+    ├── F4_cumulative_sfe.pdf
+    ├── F5_scatter_dma.pdf
+    ├── F6a_pip_a.pdf
+    ├── F6b_pip_b.pdf
+    ├── F6c_pip_c.pdf
+    ├── F7a_beta_path_a.pdf
+    ├── F7b_beta_path_b.pdf
+    ├── F7c_beta_path_c.pdf
+    ├── F8_r2_barchart.pdf
+    ├── F9_crisis_zoom.pdf
+    ├── F10_lasso_coef_path.pdf
+    └── F11_predictor_corr_heatmap.pdf
 ```
 
 ---
@@ -133,7 +139,7 @@ python main.py --data data/ --output output/ --horizons 1,2,3,6
 
 ### 4. View results
 
-All tables (`.csv`) and figures (`.png`) are saved to `output/`.
+All tables (`.csv`) and figures (`.pdf`) are saved to `output/`.
 
 ---
 
@@ -177,6 +183,17 @@ The FRED TED spread was discontinued in January 2022. We reconstruct a continuou
 ### Target variable and aggregation
 Copper returns are computed from monthly-average spot prices following Buncic & Moretto (2014), who explicitly use monthly average prices for the copper series; the convenience yield uses the same monthly-average aggregation. All other price and index series are sampled at the month-end close to avoid the Working (1960) time-aggregation bias.
 
+### Forward-price alignment factor (ω)
+The CME spot and 3-month forward series come from different vendor feeds with
+different contract/quotation conventions, so the forward must be rescaled
+before the futures–spot spread is formed. The pipeline estimates an alignment
+factor as the mean spot-to-forward ratio over the full overlapping sample,
+giving ω = 1.6428 (cross-time std. dev. 0.0046 — stable to within ~0.25% of
+its level, confirming a fixed units difference rather than a market spread).
+ω enters the convenience yield only as an affine transformation, which is
+fully absorbed by per-step predictor standardisation, so all forecasts are
+invariant to its exact value.
+
 ### Extensions (T7–T10)
 - **T7** — Pairwise Diebold-Mariano tests with the Harvey-Leybourne-Newbold small-sample correction among the four leading models (DMA, Ridge, Elastic Net, Combo). Valid because these models are non-nested, unlike the random-walk comparison which requires Clark-West.
 - **T8** — DMA out-of-sample R² across a λ × α forgetting-factor grid. Re-runs the DMA engine per cell (compute-heavy; skippable with `--skip_sensitivity`).
@@ -185,6 +202,13 @@ Copper returns are computed from monthly-average spot prices following Buncic & 
 
 ### Import aliases
 Python cannot import modules whose filenames start with a digit. The `pipeline.py`, `dma_dms.py`, etc. files in `src/` are thin aliases that dynamically load the corresponding numbered files. Both versions must be present in `src/`.
+
+### LSTM implementation
+An LSTM benchmark is implemented (`--skip_lstm` to disable) but deliberately
+excluded from the thesis: with 336 monthly observations the network cannot be
+trained robustly, and its results will be too unstable to be informative.
+
+Its inclusion in the main pipeline allows future researchers to easily test more sophisticated deep learning architectures (e.g. transformers) on more frequent data (e.g. daily) without having to re-implement the entire data pipeline and evaluation framework.
 
 ---
 
@@ -277,6 +301,6 @@ This project was developed as a Master's thesis for the MSc Finance programme at
 
 ## Licence
 
-Submitted in partial fulfilment of the requirements for the Master of Science in Finance degree, HEC Lausanne, August 2025.
+Submitted in partial fulfilment of the requirements for the Master of Science in Finance degree, HEC Lausanne, August 2026.
 
 ---

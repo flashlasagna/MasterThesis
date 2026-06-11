@@ -215,6 +215,7 @@ def run_dma_dms(y: np.ndarray,
                 lam:   float = DEFAULT_LAMBDA,
                 alpha: float = DEFAULT_ALPHA,
                 kappa: float = DEFAULT_KAPPA,
+                h:     int   = 1,
                 dates: Optional[pd.DatetimeIndex] = None,
                 verbose: bool = True) -> DMAResult:
     """
@@ -241,7 +242,8 @@ def run_dma_dms(y: np.ndarray,
     M    = 2**k
 
     if verbose:
-        print(f"DMA/DMS: k={k}, M={M:,}, T={T}, T_is={n_insample}, T_oos={T-n_insample}")
+        print(f"DMA/DMS: k={k}, M={M:,}, T={T}, T_is={n_insample}, "
+              f"T_oos={T - n_insample}, h={h}")
         print(f"  lambda={lam}, alpha={alpha}, kappa={kappa}")
 
     t_start = time.time()
@@ -284,13 +286,11 @@ def run_dma_dms(y: np.ndarray,
     oos_idx = 0
 
     for t in range(T):
-        y_t    = y[t]
-        x_full = np.concatenate([[1.0], X[t]])  # shape (k+1,) with intercept
+        x_full = np.concatenate([[1.0], X[t]])  # forecast-origin predictors
+        x_all  = np.where(inclusion, x_full[None, :], 0.0)        # (M, k+1)
 
-        # x_all[m, j] = x_full[j] if model m includes covariate j, else 0
-        x_all = np.where(inclusion, x_full[None, :], 0.0)  # (M, k+1)
-
-        # ── Prediction step (all models) — uses beta and pi from t-1 only ─
+        # ── Prediction step (all models) — state and pi reflect only data
+        #    from target windows completed by the end of month t-1 ────────
         P_pred    = P_all / lam                                    # (M, k+1)
         y_hat_all = (x_all * beta_all).sum(axis=1)                 # (M,)
 
@@ -302,7 +302,7 @@ def run_dma_dms(y: np.ndarray,
         P_tvp_pred = P_tvp / lam
         y_hat_tvp  = float(x_full @ beta_tvp)
 
-        # ── Record OOS forecasts BEFORE observing y_t (no look-ahead) ─────
+        # ── Record OOS forecasts BEFORE any update at time t ──────────────
         if t >= n_insample:
             # DMA: weighted average using prior (predicted) probabilities
             dma_fc[oos_idx] = float(pi_pred @ y_hat_all)
@@ -311,11 +311,13 @@ def run_dma_dms(y: np.ndarray,
             best_m = int(np.argmax(pi_pred))
             dms_fc[oos_idx] = float(y_hat_all[best_m])
 
-            # TVP: full model forecast (uses beta_tvp from t-1)
+            # TVP: full model forecast (uses beta_tvp from the last update)
             tvp_fc[oos_idx] = y_hat_tvp
 
-            # Historical average (mean of y up to t, excluding t)
-            ha_fc[oos_idx] = float(y[:t].mean()) if t > 0 else 0.0
+            # Historical average over COMPLETED windows only: y[s] is fully
+            # observed at origin t iff s + h - 1 <= t - 1, i.e. s < t-h+1
+            n_done = t - h + 1
+            ha_fc[oos_idx] = float(y[:n_done].mean()) if n_done > 0 else 0.0
 
             # DMA-averaged coefficients and PIPs use prior weights
             beta_dma_path[oos_idx] = (pi_pred[:, None] * beta_all * inclusion).sum(axis=0)
@@ -323,9 +325,29 @@ def run_dma_dms(y: np.ndarray,
 
             oos_idx += 1
 
-        # ── NOW observe y_t and run the posterior updates ─────────────────
-        u_hat_all = y_t - y_hat_all                                # (M,)
-        F_all     = (x_all**2 * P_pred).sum(axis=1) + H_all        # (M,)
+        # ── Update with the most recent COMPLETED window ──────────────────
+        # y[u] spans months u .. u+h-1 and is fully observed at the end of
+        # month t = u + h - 1, i.e. u = t - h + 1. For h=1, u = t and this
+        # block is identical to the standard one-step recursion. For h>1 the
+        # filter runs with an (h-1)-month delay, which purges the overlap-
+        # induced lookahead: no month inside the current forecast window
+        # (t .. t+h-1) has yet influenced beta, P, H, or pi.
+        u = t - h + 1
+        if u < 0:
+            # No completed window exists yet (first h-1 months only, deep in
+            # burn-in). Leave the state at its prior; the P inflation is
+            # deliberately not applied so the diffuse prior is not inflated
+            # before any data arrive.
+            continue
+
+        y_u      = y[u]
+        x_full_u = np.concatenate([[1.0], X[u]])
+        x_all_u  = np.where(inclusion, x_full_u[None, :], 0.0)     # (M, k+1)
+
+        # Model-by-model fit of the completed observation u
+        y_hat_all_u = (x_all_u * beta_all).sum(axis=1)             # (M,)
+        u_hat_all   = y_u - y_hat_all_u                            # (M,)
+        F_all       = (x_all_u**2 * P_pred).sum(axis=1) + H_all    # (M,)
 
         # Normal predictive log-likelihood (numerically stable)
         log_f = -0.5 * (np.log(2.0 * np.pi * np.maximum(F_all, 1e-12))
@@ -337,18 +359,19 @@ def run_dma_dms(y: np.ndarray,
         pi_all = pi_pred * f_N
         pi_all /= pi_all.sum()
 
-        # TVP posterior update
-        u_hat_tvp = y_t - y_hat_tvp
-        F_tvp     = float(x_full @ P_tvp_pred @ x_full) + H_tvp
-        G_tvp     = P_tvp_pred @ x_full / F_tvp
-        beta_tvp  = beta_tvp + G_tvp * u_hat_tvp
-        P_tvp     = P_tvp_pred - np.outer(G_tvp, x_full) @ P_tvp_pred
-        H_tvp     = kappa * H_tvp + (1 - kappa) * u_hat_tvp**2
+        # TVP posterior update (same completed observation u)
+        y_hat_tvp_u = float(x_full_u @ beta_tvp)
+        u_hat_tvp   = y_u - y_hat_tvp_u
+        F_tvp       = float(x_full_u @ P_tvp_pred @ x_full_u) + H_tvp
+        G_tvp       = P_tvp_pred @ x_full_u / F_tvp
+        beta_tvp    = beta_tvp + G_tvp * u_hat_tvp
+        P_tvp       = P_tvp_pred - np.outer(G_tvp, x_full_u) @ P_tvp_pred
+        H_tvp       = kappa * H_tvp + (1 - kappa) * u_hat_tvp**2
 
         # Kalman update for all models
-        G_all     = P_pred * x_all / np.maximum(F_all[:, None], 1e-12)
+        G_all     = P_pred * x_all_u / np.maximum(F_all[:, None], 1e-12)
         beta_all  = beta_all + G_all * u_hat_all[:, None]
-        P_all     = P_pred - G_all * x_all * P_pred
+        P_all     = P_pred - G_all * x_all_u * P_pred
         P_all     = np.maximum(P_all, 1e-10)  # numerical floor
         H_all     = kappa * H_all + (1 - kappa) * u_hat_all**2
 
@@ -407,7 +430,7 @@ def run_dma_dms(y: np.ndarray,
         r2_oos          = r2_oos,
         cw_stat         = cw_stat,
         cw_pval         = cw_pval,
-        params          = {'lambda': lam, 'alpha': alpha, 'kappa': kappa,
+        params          = {'lambda': lam, 'alpha': alpha, 'kappa': kappa, 'h': h,
                            'k': k, 'M': M, 'T': T,
                            'n_insample': n_insample, 'T_oos': T_oos},
         runtime_seconds = runtime,
@@ -481,6 +504,7 @@ def run_dma_multihorizon(y: np.ndarray,
             y=y_h_valid, X=X_valid,
             n_insample=n_is_h,
             lam=lam, alpha=alpha, kappa=kappa,
+            h=h,
             dates=dates_h,
             verbose=verbose
         )
@@ -529,7 +553,8 @@ def print_evaluation_table(result: DMAResult,
             'HA_exp': 'HA (expanding)',
             'TVP':    f'TVP (lambda={result.params["lambda"]})',
             'DMS':    f'DMS (alpha={result.params["alpha"]}, lambda={result.params["lambda"]})',
-            'DMA':    f'DMA (alpha={result.params["alpha"]}, lambda={result.params["lambda"]})',
+            'DMA': f'DMA (h={result.params.get("h", 1)}, '
+                   f'alpha={result.params["alpha"]}, lambda={result.params["lambda"]})',
         }[name]
         rows.append({
             'Model':         label,

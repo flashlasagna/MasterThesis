@@ -219,7 +219,7 @@ def main():
                 res_h = run_elasticnet(
                     y=y_h_valid, X=X_valid,
                     n_insample=n_insample,
-                    dates=dates_h, verbose=True)
+                    dates=dates_h, verbose=True, gap=h-1)
                 ml_results[f'ElasticNet_h{h}'] = res_h
 
         print(f"  Elapsed: {_elapsed(t0)}")
@@ -288,8 +288,8 @@ def main():
         print(f"    Combo DMA+EN      :  {hybrid_results['Combo_DMA_EN'].r2_oos*100:.2f}%")
     print(f"    Random Walk       :   0.00%  (benchmark)")
     print()
-    print("  Tables saved  : T1–T6 (.csv)")
-    print("  Figures saved : F1–F10 (.pdf)")
+    print("  Tables saved  : T1–T10 (.csv)")
+    print("  Figures saved : F1–F11 (.pdf)")
 
 
 # ---------------------------------------------------------------------------

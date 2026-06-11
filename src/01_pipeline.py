@@ -11,7 +11,10 @@ Steps
 3.  Reconstruct the TED spread (FRED discontinued Jan 2022):
         Phase 1 : 3M LIBOR - 3M T-Bill              (1986 - Sep 2020)
         Phase 2 : 3M SOFR + LIBOR-SOFR adj - 3M T-Bill  (Oct 2020 - Feb 2026)
-4.  Aggregate all daily series to monthly averages (consistent with paper).
+4.  Aggregate daily series to monthly: copper spot and 3M forward as monthly
+    AVERAGES (target comparability with Buncic & Moretto 2014); all other
+    price/index series at the MONTH-END close (avoids Working's 1960
+    time-aggregation bias in predictor returns).
 5.  Engineer all 18 predictor variables exactly as in Buncic & Moretto (2014).
 6.  Return a clean, fully-merged monthly panel with no NaNs.
 
@@ -274,8 +277,10 @@ def _snap_to_month_start(df):
 
 def _aggregate_monthly(raw, ibor):
     """
-    Aggregate all raw series to monthly and merge into one panel.
-    Daily price/index series use monthly mean (consistent with the paper).
+        Aggregate all raw series to monthly and merge into one panel.
+        spot/fwd3m -> monthly means (paper-consistent target & convenience yield);
+        all other daily price/index series -> month-end close (Working 1960);
+        rates and macro series -> monthly levels, no intra-month aggregation.
     """
     # Daily price/index series -> month-end last (avoids Working's effect on returns)
     # spot and fwd3m use monthly averages following Buncic & Moretto (2014),
@@ -457,7 +462,7 @@ def build_dataset(data_dir='data/'):
     panel                  = _aggregate_monthly(raw, ibor)
     df                     = _build_features(panel)
 
-    final_cols = ['date', TARGET_COL] + PREDICTOR_COLS
+    final_cols = ['date', TARGET_COL, 'spot'] + PREDICTOR_COLS
     df_final   = df[final_cols].dropna().reset_index(drop=True)
 
     meta = {
