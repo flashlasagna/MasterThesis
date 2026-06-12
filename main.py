@@ -123,7 +123,7 @@ def main():
     output_dir = args.output
     n_insample = args.insample
     horizons   = [int(h) for h in args.horizons.split(',')]
-    include_lstm = not args.skip_lstm
+    include_lstm = False
 
     # Ensure output directory exists
     Path(output_dir).mkdir(parents=True, exist_ok=True)

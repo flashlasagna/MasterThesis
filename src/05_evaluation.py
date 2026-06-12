@@ -490,10 +490,7 @@ def plot_f2_predictor_grid(df: pd.DataFrame, dates: pd.DatetimeIndex,
                     ax.xaxis.set_major_locator(mdates.YearLocator(8))
                     ax.tick_params(labelbottom=True)
 
-            fig.suptitle(
-                f'Predictor Time Series — {group_title}'
-                ' (March 1998 – February 2026)',
-                fontsize=11, y=1.01)
+
             _save_fig(fig, os.path.join(
                 output_dir, f'F2{suffix}_predictors_{suffix}.pdf'))
 
@@ -605,10 +602,7 @@ def plot_f6_pip_grid(dma_result, output_dir: str) -> None:
                     ax.xaxis.set_major_locator(mdates.YearLocator(6))
                     ax.tick_params(labelbottom=True)
 
-            fig.suptitle(
-                f'Figure A2{suffix}: Posterior Inclusion Probabilities —'
-                f' {group_title} (March 2008 – February 2026)',
-                fontsize=11, y=1.01)
+
             _save_fig(fig, os.path.join(
                 output_dir, f'F6{suffix}_pip_{suffix}.pdf'))
 
@@ -636,10 +630,7 @@ def plot_f7_beta_path(dma_result, output_dir: str) -> None:
                     ax.xaxis.set_major_locator(mdates.YearLocator(6))
                     ax.tick_params(labelbottom=True)
 
-            fig.suptitle(
-                f'DMA Time-Varying Coefficients β̂(DMA) —'
-                f' {group_title} (March 2008 – February 2026)',
-                fontsize=11, y=1.01)
+
             _save_fig(fig, os.path.join(
                 output_dir, f'F7{suffix}_beta_path_{suffix}.pdf'))
 
@@ -761,8 +752,7 @@ def plot_f9_crisis_zoom(dma_result, ml_results: dict,
                         bbox=dict(boxstyle='round,pad=0.3', fc='white', alpha=0.8))
 
         axes[0].legend(loc='lower left', fontsize=8, framealpha=0.8)
-        fig.suptitle('Forecasting Performance During Crisis Periods',
-                     fontsize=11, y=1.02)
+
         _save_fig(fig, os.path.join(output_dir, 'F9_crisis_zoom.png'))
 
 
@@ -815,8 +805,7 @@ def plot_f10_lasso_coef(ml_results: dict, dma_result,
         ]
         fig.legend(handles=handles, loc='lower center', ncol=2,
                    fontsize=9, framealpha=0.8, bbox_to_anchor=(0.5, -0.02))
-        fig.suptitle('LASSO Coefficients vs DMA Posterior Inclusion Probabilities'
-                     ' (Top 6 Predictors)', fontsize=11)
+
         _save_fig(fig, os.path.join(output_dir, 'F10_lasso_coef_path.png'))
 
 

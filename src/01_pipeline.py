@@ -307,7 +307,7 @@ def _aggregate_monthly(raw, ibor):
 
     ip_m = _snap_to_month_start(raw['ip'].rename(columns={'ip': 'ip'}))
     ip_m.columns = ['date', 'ip']
-    ip_m['ip'] = ip_m['ip'].interpolate(method='linear')  # fix 2 NaN values
+    ip_m['ip'] = ip_m['ip'].ffill()  # fix 2 NaN values
     monthly['ip'] = ip_m
 
     # Merge all on date
