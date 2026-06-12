@@ -2,7 +2,7 @@
 02_dma_dms.py
 =============
 Dynamic Model Averaging and Selection (DMA/DMS) for copper return forecasting.
-Replicates the econometric framework of Buncic & Moretto (2014).
+Replicates the econometric framework of Buncic & Moretto (2015).
 
 Mathematical Framework
 ----------------------
@@ -46,7 +46,7 @@ Parameters (paper defaults)
 
 References
 ----------
-Buncic, D. & Moretto, C. (2014). Forecasting Copper Prices with Dynamic
+Buncic, D. & Moretto, C. (2015). Forecasting Copper Prices with Dynamic
     Averaging and Selection Models. SSRN 2482015.
 Koop, G. & Korobilis, D. (2012). Forecasting Inflation Using Dynamic Model
     Averaging. International Economic Review, 53(3), 867-886.
@@ -460,7 +460,7 @@ def run_dma_multihorizon(y: np.ndarray,
         r^h_{t+h} = 100 * (S_{t+h} / S_t - 1)
     and predictors X_t (same as one-step, lagged h periods).
 
-    This matches Section 5.4 of Buncic & Moretto (2014).
+    This matches Section 5.4 of Buncic & Moretto (5).
 
     Parameters
     ----------
@@ -520,7 +520,7 @@ def print_evaluation_table(result: DMAResult,
                             horizon: int = 1,
                             include_ols: bool = False) -> pd.DataFrame:
     """
-    Print Table 2 from Buncic & Moretto (2014) — out-of-sample forecast results.
+    Print Table 2 from Buncic & Moretto (2015) — out-of-sample forecast results.
 
     Columns: Model | MSFE | Relative MSFE | R2_oos (%) | CW-stat | p-value
 

@@ -191,7 +191,7 @@ def make_table1(df: pd.DataFrame, predictor_cols: list,
                 output_dir: str) -> pd.DataFrame:
     """
     Table 1: Summary statistics.
-    Matches Table 1 format of Buncic & Moretto (2014).
+    Matches Table 1 format of Buncic & Moretto (2015).
     """
     cols   = ['r_copper'] + predictor_cols
     labels = {
@@ -281,7 +281,7 @@ def make_table3(dma_mh_results: dict, ml_results: dict,
                 output_dir: str) -> pd.DataFrame:
     """
     Table 3: Multi-horizon (h=2,3,6) forecast evaluation.
-    Mirrors Table 3 format of Buncic & Moretto (2014).
+    Mirrors Table 3 format of Buncic & Moretto (2015).
     """
     rows = []
     for h, dma_h in sorted(dma_mh_results.items()):

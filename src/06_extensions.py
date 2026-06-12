@@ -2,7 +2,7 @@
 06_extensions.py
 ================
 Tier-1 robustness and value-added extensions for "Forecasting Copper Prices:
-A Replication and ML Extension of Buncic & Moretto (2014)".
+A Replication and ML Extension of Buncic & Moretto (2015)".
 
 These analyses sharpen and defend the thesis's central claims without altering
 the core pipeline. All four read directly from the result objects already

@@ -43,13 +43,6 @@ both base models — the forecast combination puzzle (Smith & Wallis, 2009).
 The hybrids therefore confirm the thesis's convergence result rather than
 overturn it: DMA and the regularised linear models share most of their
 information set, leaving little complementary signal to exploit.
-
-References
-----------
-Bates, J.M. & Granger, C.W.J. (1969). The Combination of Forecasts.
-    Operations Research Quarterly, 20(4), 451-468.
-Buncic, D. & Moretto, C. (2014). Forecasting Copper Prices with Dynamic
-    Averaging and Selection Models. SSRN 2482015.
 """
 
 import time

@@ -188,7 +188,7 @@ def run_ols(y: np.ndarray, X: np.ndarray, n_insample: int,
     Expanding window OLS regression.
 
     Direct comparator to the 'OLS (expanding window)' benchmark in
-    Table 2 of Buncic & Moretto (2014). No regularisation, no feature
+    Table 2 of Buncic & Moretto (2015). No regularisation, no feature
     selection — all 18 predictors plus intercept at every step.
     Predictors are standardised to make coefficients comparable.
     """
@@ -628,7 +628,7 @@ def run_historical_average(y: np.ndarray, X: np.ndarray, n_insample: int,
     Historical average (HA) benchmark — expanding window mean of y.
 
     Equivalent to OLS regression on an intercept only. Corresponds to the
-    'HA (expanding window)' row in Table 2 of Buncic & Moretto (2014).
+    'HA (expanding window)' row in Table 2 of Buncic & Moretto (2015).
     Included here for completeness and to anchor the ML comparison table.
     """
     T_oos = len(y) - n_insample

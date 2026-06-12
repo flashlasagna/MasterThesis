@@ -2,7 +2,7 @@
 main.py
 =======
 Master orchestrator for "Forecasting Copper Prices:
-A Replication and ML Extension of Buncic & Moretto (2014)".
+A Replication and ML Extension of Buncic & Moretto (2015)".
 
 Run from the MasterThesis/ root directory:
     python3 main.py

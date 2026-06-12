@@ -1,4 +1,4 @@
-# Forecasting Copper Prices: A Replication and ML Extension of Buncic & Moretto (2014)
+# Forecasting Copper Prices: A Replication and ML Extension of Buncic & Moretto (2015)
 
 **Master of Science in Finance — Master Thesis**
 *HEC Lausanne, University of Lausanne*
@@ -11,7 +11,7 @@
 
 ## Overview
 
-This thesis replicates and extends the Dynamic Model Averaging and Selection (DMA/DMS) framework of Buncic & Moretto (2014) for forecasting monthly CME copper returns. The original paper uses 18 predictor variables and a Kalman filter-based model averaging approach over 2^18 = 262,144 candidate models. We extend the out-of-sample evaluation period to February 2026, introduce five machine learning benchmarks, propose a hybrid framework combining DMA with ML forecasts, and add a set of robustness and value-added extensions (pairwise Diebold-Mariano tests, forgetting-factor sensitivity, directional accuracy, and a predictor correlation matrix).
+This thesis replicates and extends the Dynamic Model Averaging and Selection (DMA/DMS) framework of Buncic & Moretto (2015) for forecasting monthly CME copper returns. The original paper uses 18 predictor variables and a Kalman filter-based model averaging approach over 2^18 = 262,144 candidate models. We extend the out-of-sample evaluation period to February 2026, introduce five machine learning benchmarks, propose a hybrid framework combining DMA with ML forecasts, and add a set of robustness and value-added extensions (pairwise Diebold-Mariano tests, forgetting-factor sensitivity, directional accuracy, and a predictor correlation matrix).
 
 **Key findings:**
 - DMA achieves out-of-sample R² = 30.16% (March 2008 – February 2026)
@@ -181,7 +181,7 @@ All 18 predictors are lagged by one month (`shift(1)`) so that `X_t` contains on
 The FRED TED spread was discontinued in January 2022. We reconstruct a continuous series by stitching 3-month LIBOR (to September 2020) with 3-month SOFR, adjusted by a constant LIBOR-SOFR spread estimated over the 534-day overlap window (July 2018 – September 2020). The reconstructed series correlates 0.98 with the original FRED series.
 
 ### Target variable and aggregation
-Copper returns are computed from monthly-average spot prices following Buncic & Moretto (2014), who explicitly use monthly average prices for the copper series; the convenience yield uses the same monthly-average aggregation. All other price and index series are sampled at the month-end close to avoid the Working (1960) time-aggregation bias.
+Copper returns are computed from monthly-average spot prices following Buncic & Moretto (2015), who explicitly use monthly average prices for the copper series; the convenience yield uses the same monthly-average aggregation. All other price and index series are sampled at the month-end close to avoid the Working (1960) time-aggregation bias.
 
 ### Forward-price alignment factor (ω)
 The CME spot and 3-month forward series come from different vendor feeds with
@@ -288,7 +288,7 @@ torch>=2.0.0          # optional, for LSTM
 
 This project was developed as a Master's thesis for the MSc Finance programme at HEC Lausanne, University of Lausanne. It replicates and extends:
 
-> Buncic, D. & Moretto, C. (2014). *Forecasting Copper Prices with Dynamic Averaging and Selection Models*. SSRN Working Paper 2482015.
+> Buncic, D. & Moretto, C. (2015). *Forecasting Copper Prices with Dynamic Averaging and Selection Models*. SSRN Working Paper 2482015.
 
 ---
 

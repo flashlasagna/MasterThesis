@@ -2,7 +2,7 @@
 01_pipeline.py
 ==============
 Data pipeline for "Forecasting Copper Prices: A Replication and ML Extension
-of Buncic & Moretto (2014)".
+of Buncic & Moretto (2015)".
 
 Steps
 -----
@@ -12,10 +12,10 @@ Steps
         Phase 1 : 3M LIBOR - 3M T-Bill              (1986 - Sep 2020)
         Phase 2 : 3M SOFR + LIBOR-SOFR adj - 3M T-Bill  (Oct 2020 - Feb 2026)
 4.  Aggregate daily series to monthly: copper spot and 3M forward as monthly
-    AVERAGES (target comparability with Buncic & Moretto 2014); all other
+    AVERAGES (target comparability with Buncic & Moretto 2015); all other
     price/index series at the MONTH-END close (avoids Working's 1960
     time-aggregation bias in predictor returns).
-5.  Engineer all 18 predictor variables exactly as in Buncic & Moretto (2014).
+5.  Engineer all 18 predictor variables exactly as in Buncic & Moretto (2015).
 6.  Return a clean, fully-merged monthly panel with no NaNs.
 
 Output
@@ -48,11 +48,11 @@ Notes
    indicate CLP appreciation against the USD, i.e. returns = -delta_log(USDCLP).
 
 *  Convenience yield is computed without storage costs (set to zero) following
-   Fama & French (1988) and Buncic & Moretto (2014, p.17).
+   Fama & French (1988) and Buncic & Moretto (2015, p.17).
 
 References
 ----------
-Buncic, D. & Moretto, C. (2014). Forecasting Copper Prices with Dynamic
+Buncic, D. & Moretto, C. (2015). Forecasting Copper Prices with Dynamic
     Averaging and Selection Models. SSRN Working Paper 2482015.
 Fama, E.F. & French, K.R. (1988). Business Cycles and the Behavior of Metals
     Prices. Journal of Finance, 43(5), 1075-1093.
@@ -283,7 +283,7 @@ def _aggregate_monthly(raw, ibor):
         rates and macro series -> monthly levels, no intra-month aggregation.
     """
     # Daily price/index series -> month-end last (avoids Working's effect on returns)
-    # spot and fwd3m use monthly averages following Buncic & Moretto (2014),
+    # spot and fwd3m use monthly averages following Buncic & Moretto (2015),
     # who explicitly state they use monthly average LME prices as the target.
     # All other price series use month-end close to avoid Working's Effect.
     mean_cols = ['spot', 'fwd3m']
@@ -344,7 +344,7 @@ def _build_features(panel):
     """
     Construct all 18 predictor variables and the target return.
 
-    Variable definitions follow Buncic & Moretto (2014) exactly.
+    Variable definitions follow Buncic & Moretto (2015) exactly.
     See module docstring for full definitions.
     """
     df = panel.copy()
