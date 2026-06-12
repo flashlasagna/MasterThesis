@@ -288,7 +288,9 @@ torch>=2.0.0          # optional, for LSTM
 
 This project was developed as a Master's thesis for the MSc Finance programme at HEC Lausanne, University of Lausanne. It replicates and extends:
 
-> Buncic, D. & Moretto, C. (2015). *Forecasting Copper Prices with Dynamic Averaging and Selection Models*. SSRN Working Paper 2482015.
+> Buncic, D. & Moretto, C. (2015). Forecasting copper prices with dynamic
+> averaging and selection models. *The North American Journal of Economics
+> and Finance*, 33, 1–38. https://doi.org/10.1016/j.najef.2015.03.002
 
 ---
 
