@@ -240,6 +240,51 @@ def make_table7_dm(forecasts: dict,
 
 
 # ===========================================================================
+# T17 — Power of the pairwise DM tests (minimum detectable difference)
+# ===========================================================================
+
+def make_table17_dm_power(forecasts: dict, actual: np.ndarray,
+                          output_dir: str, bw: int = 5,
+                          alpha: float = 0.05, power: float = 0.80) -> pd.DataFrame:
+    """
+    For each pair of leading models: the observed mean loss differential,
+    the smallest differential detectable with `power` at level `alpha`
+    (two-sided) given the Bartlett-HAC sd of d_t, the power at the
+    observed value, and the sample size needed to detect the observed
+    value at `power`. MSFE quantities are also expressed in percentage
+    points of OOS R^2 by dividing by the random-walk MSFE.
+    """
+    from scipy.stats import norm
+    _ensure_dir(output_dir)
+    y = np.asarray(actual); T = len(y); msfe_rw = float(np.mean(y**2))
+    z = norm.ppf(1 - alpha/2) + norm.ppf(power)
+    names = list(forecasts); rows = []
+    for i in range(len(names)):
+        for j in range(i+1, len(names)):
+            a, b = names[i], names[j]
+            d  = (y - forecasts[a])**2 - (y - forecasts[b])**2
+            dc = d - d.mean(); v = np.sum(dc**2)/T
+            for l in range(1, bw+1):
+                v += 2*(1 - l/(bw+1))*np.sum(dc[l:]*dc[:-l])/T
+            sd = np.sqrt(v); se = sd/np.sqrt(T); obs = d.mean(); mdd = z*se
+            pw = (1 - norm.cdf(norm.ppf(1-alpha/2) - abs(obs)/se)
+                  + norm.cdf(-norm.ppf(1-alpha/2) - abs(obs)/se))
+            Tn = (z*sd/abs(obs))**2 if obs != 0 else np.inf
+            rows.append({'Model A': a, 'Model B': b,
+                         'Observed dMSFE': round(obs, 3),
+                         'Observed dR2 (pp)': round(100*obs/msfe_rw, 2),
+                         'HAC sd(d)': round(sd, 2),
+                         'Detectable dMSFE': round(mdd, 3),
+                         'Detectable dR2 (pp)': round(100*mdd/msfe_rw, 2),
+                         'Power at observed': round(pw, 3),
+                         'T needed': int(np.ceil(Tn)) if np.isfinite(Tn) else np.nan})
+    tab = pd.DataFrame(rows)
+    tab.to_csv(os.path.join(output_dir, 'T17_dm_power.csv'), index=False)
+    print("  T17 saved (DM power / minimum detectable difference)")
+    return tab
+
+
+# ===========================================================================
 # T8 — Forgetting-factor sensitivity
 # ===========================================================================
 
@@ -621,6 +666,11 @@ def run_all_extensions(df: pd.DataFrame,
     top_fc = _collect_top_forecasts(dma_result, ml_results, hybrid_results)
     out['T7'] = make_table7_dm(top_fc, actual, output_dir, h=1)
     print(out['T7'].to_string(index=False))
+
+    # ── T17: power of the pairwise DM tests ───────────────────────────────
+    print("\nT17: Minimum detectable difference for the DM tests")
+    out['T17'] = make_table17_dm_power(top_fc, actual, output_dir)
+    print(out['T17'].to_string(index=False))
 
     # ── T9: directional accuracy + PT (cheap; do before optional T8) ─────
     print("\nT9: Directional accuracy + Pesaran-Timmermann")

@@ -1,0 +1,7 @@
+Model A,Model B,Observed dMSFE,Observed dR2 (pp),HAC sd(d),Detectable dMSFE,Detectable dR2 (pp),Power at observed,T needed
+DMA,Ridge,-0.22,-0.66,19.68,3.751,11.18,0.053,62798
+DMA,ElasticNet,-0.388,-1.16,17.55,3.345,9.97,0.062,16017
+DMA,Combo,0.331,0.99,8.72,1.663,4.96,0.086,5440
+Ridge,ElasticNet,-0.168,-0.5,6.42,1.223,3.65,0.067,11384
+Ridge,Combo,0.551,1.64,12.38,2.36,7.03,0.1,3956
+ElasticNet,Combo,0.72,2.15,9.22,1.758,5.24,0.209,1289

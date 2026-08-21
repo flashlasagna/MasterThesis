@@ -557,6 +557,78 @@ def plot_f4_cumulative_sfe(dma_result, ml_results: dict, hybrid_results: dict,
         _save_fig(fig, os.path.join(output_dir, 'F4_cumulative_sfe.png'))
 
 
+
+def plot_f12_rolling_hit_rate(dma_result, ml_results: dict, hybrid_results: dict,
+                              output_dir: str, window: int = 36) -> pd.DataFrame:
+    """
+    F12: directional accuracy over time.
+      Top panel   -- rolling `window`-month hit rate for DMA, ElasticNet and
+                     the equal-weight combo, against the 50% line and the
+                     rolling unconditional frequency of positive returns
+                     (the hit rate a constant 'always up' call would earn).
+      Bottom panel-- cumulative net correct calls (correct minus incorrect),
+                     the sign-only analogue of Figure 4.
+    Exact-zero forecasts count as incorrect, as in Table 4. Also writes
+    T19_rolling_hitrate.csv with the plotted series and sub-period hit rates.
+    """
+    y_oos     = dma_result.actual
+    dates_oos = dma_result.dates
+    series = {'DMA': dma_result.dma_forecasts}
+    if 'ElasticNet' in ml_results:
+        series['ElasticNet'] = ml_results['ElasticNet'].forecasts
+    if 'Combo_DMA_EN' in hybrid_results:
+        series['Combo DMA+EN'] = hybrid_results['Combo_DMA_EN'].forecasts
+    styles = {'DMA': (COLOURS['dma'], '-', 1.5), 'ElasticNet': (COLOURS['en'], '--', 1.2),
+              'Combo DMA+EN': (COLOURS['combo'], ':', 1.2)}
+
+    sign_y = np.sign(y_oos)
+    hits = {k: ((np.sign(v) == sign_y) & (v != 0)).astype(float) for k, v in series.items()}
+    up   = (y_oos > 0).astype(float)
+    roll = pd.DataFrame({**{k: pd.Series(v).rolling(window).mean().values for k, v in hits.items()},
+                         'Always up': pd.Series(up).rolling(window).mean().values}, index=dates_oos)
+    cum  = pd.DataFrame({k: np.cumsum(2*v - 1) for k, v in hits.items()}, index=dates_oos)
+
+    with plt.rc_context(THESIS_STYLE):
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True,
+                                       gridspec_kw={'height_ratios': [1.3, 1]})
+        for k in series:
+            c, ls, lw = styles[k]
+            ax1.plot(dates_oos, 100*roll[k], color=c, ls=ls, lw=lw, label=k, zorder=3)
+        ax1.plot(dates_oos, 100*roll['Always up'], color=COLOURS['actual'], lw=0.9, ls='-.',
+                 label='Unconditional P(return > 0)', zorder=2)
+        ax1.axhline(50, color=COLOURS['rw'], lw=0.8)
+        _add_event_shading(ax1, dates_oos)
+        ax1.set_ylabel(f'{window}-month rolling hit rate (%)')
+        ax1.set_ylim(30, 100)
+        ax1.legend(loc='lower left', framealpha=0.8, ncol=2)
+
+        for k in series:
+            c, ls, lw = styles[k]
+            ax2.plot(dates_oos, cum[k], color=c, ls=ls, lw=lw, label=k, zorder=3)
+        ax2.axhline(0, color=COLOURS['rw'], lw=0.8)
+        _add_event_shading(ax2, dates_oos, label=False)
+        ax2.set_ylabel('Cumulative correct minus incorrect calls')
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+        _save_fig(fig, os.path.join(output_dir, 'F12_rolling_hit_rate.png'))
+
+    # Sub-period hit rates (same windows as Table 7)
+    periods = [('Pre-GFC', '2008-03-01', '2008-08-31'), ('GFC', '2008-09-01', '2009-06-30'),
+               ('Recovery', '2009-07-01', '2019-12-31'), ('COVID-19', '2020-01-01', '2020-12-31'),
+               ('Supercycle', '2021-01-01', '2021-12-31'), ('Ukraine shock', '2022-01-01', '2022-12-31'),
+               ('Post-shock', '2023-01-01', '2026-02-28'), ('Full OOS', '2008-03-01', '2026-02-28')]
+    rows = []
+    for name, a, b in periods:
+        m = (dates_oos >= a) & (dates_oos <= b)
+        rows.append({'Period': name, 'N': int(m.sum()),
+                     **{k: round(100*v[m].mean(), 1) for k, v in hits.items()},
+                     'Always up': round(100*up[m].mean(), 1)})
+    sub = pd.DataFrame(rows)
+    roll.assign(**{f'cum_{k}': cum[k] for k in cum}).to_csv(
+        os.path.join(output_dir, 'T19_rolling_hitrate.csv'))
+    sub.to_csv(os.path.join(output_dir, 'T19_subperiod_hitrate.csv'), index=False)
+    return sub
+
+
 def plot_f5_scatter_dma(dma_result, output_dir: str) -> None:
     """F5: Scatter plot of DMA predicted vs actual returns."""
     dma_fc = dma_result.dma_forecasts
@@ -868,6 +940,7 @@ def run_full_evaluation(df: pd.DataFrame,
     plot_f3_actual_predicted(dma_result, ml_results, output_dir)
     plot_f4_cumulative_sfe(dma_result, ml_results, hybrid_results, output_dir)
     plot_f5_scatter_dma(dma_result, output_dir)
+    plot_f12_rolling_hit_rate(dma_result, ml_results, hybrid_results, output_dir)
     plot_f6_pip_grid(dma_result, output_dir)
     plot_f7_beta_path(dma_result, output_dir)
     plot_f8_r2_barchart(dma_result, ml_results, hybrid_results, output_dir)

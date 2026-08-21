@@ -37,6 +37,7 @@ Pipeline steps
     Step 9  Real-time availability src/realtime.py     (T11)       [skippable with --skip_robustness]
     Step 10 Omega estimation       src/omega.py        (T12)       [skippable with --skip_robustness]
     Step 11 Tree hyperparameters   src/tree_tuning.py  (T14)       [skippable with --skip_robustness / --skip_tree_tuning]
+    Step 12 Burn-in / OOS start    src/burnin.py       (T16)       [skippable with --skip_robustness]
 
 Estimated runtime of steps 9–11: ~6 min (9+10) + ~25 min (11) single-core.
 
@@ -70,6 +71,7 @@ from src.extensions  import run_all_extensions
 from src.realtime    import run_realtime_robustness
 from src.omega       import run_omega_robustness
 from src.tree_tuning import run_tree_tuning
+from src.burnin      import run_burnin_robustness, run_training_length
 
 import numpy as np
 import pandas as pd
@@ -93,7 +95,7 @@ def parse_args():
     p.add_argument('--skip_sensitivity', action='store_true',
                    help='Skip the T8 forgetting-factor grid (the only heavy extension)')
     p.add_argument('--skip_robustness', action='store_true',
-                   help='Skip the reviewer-robustness steps 9-11 (T11, T12, T14)')
+                   help='Skip the reviewer-robustness steps 9-12 (T11, T12, T14, T16)')
     p.add_argument('--skip_tree_tuning', action='store_true',
                    help='Skip only the tree hyperparameter step 11 (T14, ~25 min)')
     p.add_argument('--horizons',  default='1,2,3,6',
@@ -256,6 +258,26 @@ def main():
                         rw_msfe=dma_result.msfe['RW'])
     print(f"  Elapsed: {_elapsed(t0)}")
 
+    # ── Cache the estimated results so tables/figures can be regenerated
+    #    without re-estimating (see rerun_outputs.py). Result dataclasses
+    #    are stored as plain dicts: the digit-prefixed modules are loaded
+    #    through aliases, so their classes are not importable by pickle. ──
+    try:
+        import pickle
+        from src.cache_utils import to_plain
+        cache_path = Path(output_dir) / '_cache_results.pkl'
+        with open(cache_path, 'wb') as fh:
+            pickle.dump({'df': df, 'predictor_cols': list(PREDICTOR_COLS),
+                         'n_insample': n_insample, 'dates': dates,
+                         'dma_result': to_plain(dma_result),
+                         'dma_mh_results': to_plain(dma_mh_results),
+                         'ml_results': to_plain(ml_results),
+                         'hybrid_results': to_plain(hybrid_results)},
+                        fh, protocol=pickle.HIGHEST_PROTOCOL)
+        print(f"  Cached estimation results -> {cache_path}")
+    except Exception as exc:          # never let caching abort a 40-minute run
+        print(f"  [warning] could not write results cache: {exc}")
+
     # ── Step 7: Full evaluation — all tables and figures ─────────────────────
     _step(7, "Generating all tables and figures")
     t0 = time.time()
@@ -318,6 +340,16 @@ def main():
     else:
         _step(11, "Tree hyperparameter validation [SKIPPED]")
 
+    # ── Step 12: Burn-in window / OOS start sensitivity (T16) ────────────────
+    if not args.skip_robustness:
+        _step(12, "Burn-in window and training-history sensitivity (T16)")
+        t0 = time.time()
+        run_burnin_robustness(df, output_dir=output_dir, verbose=True)
+        run_training_length(df,  output_dir=output_dir, verbose=True)
+        print(f"  Elapsed: {_elapsed(t0)}")
+    else:
+        _step(12, "Burn-in window sensitivity [SKIPPED]")
+
     # ── Summary ──────────────────────────────────────────────────────────────
     _header("Pipeline complete")
     print(f"  Total runtime : {_elapsed(t_total)}")
@@ -332,7 +364,7 @@ def main():
     print(f"    Random Walk       :   0.00%  (benchmark)")
     print()
     print("  Tables saved  : T1–T10, T13 (.csv)"
-          + ("" if args.skip_robustness else ", T11, T12")
+          + ("" if args.skip_robustness else ", T11, T12, T16")
           + ("" if (args.skip_robustness or args.skip_tree_tuning) else ", T14"))
     print("  Figures saved : F1–F11 (.pdf)")
 

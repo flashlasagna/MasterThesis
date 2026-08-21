@@ -1,0 +1,8 @@
+Scheme,Sample start,Training months at first origin,DMA R2,Ridge R2,ElasticNet R2,Combo R2
+expanding,Mar 1998,120,30.16,29.51,29.01,31.15
+expanding,Mar 2000,96,30.09,27.62,28.25,30.95
+expanding,Mar 2002,72,29.47,28.83,28.53,31.06
+expanding,Mar 2004,48,22.78,27.81,30.53,29.22
+rolling 60m,Mar 1998,60,,28.45,28.78,
+rolling 96m,Mar 1998,96,,28.35,29.96,
+rolling 120m,Mar 1998,120,,28.55,27.86,

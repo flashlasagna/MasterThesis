@@ -16,7 +16,7 @@ This thesis replicates and extends the Dynamic Model Averaging and Selection (DM
 **Key findings:**
 - DMA achieves out-of-sample R² = 30.16% (March 2008 – February 2026)
 - Regularised linear ML (Ridge: 29.51%, Elastic Net: 29.01%) converges with DMA; pairwise Diebold-Mariano tests cannot distinguish them
-- Equal-weight DMA + Elastic Net combination achieves the best R² of 31.15%, improving on DMA by only one percentage point
+- Equal-weight DMA + Elastic Net combination achieves the best R² of 31.15%, improving on DMA by only one percentage point (not statistically significant)
 - Tree-based methods lag (Random Forest: 21.23%, XGBoost: 12.54%)
 - Predictability is episodic: R² = 47.95% during the GFC, 37.16% during the Ukraine shock, but only 3.26% post-2023
 
@@ -127,6 +127,17 @@ python main.py --data data/ --output output/ --skip_mh --skip_sensitivity --skip
 python main.py --data data/ --output output/
 ```
 
+### 3b. Regenerate tables and figures without re-estimating
+
+`main.py` caches all forecasts in `output/_cache_results.pkl`. After editing a
+plotting or table function in `05_evaluation.py` / `06_extensions.py`:
+```bash
+python rerun_outputs.py              # steps 7 + 8 from the cache (seconds)
+python rerun_outputs.py --figures    # step 7 only
+python rerun_outputs.py --extensions # step 8 only
+```
+Re-run `main.py` whenever data, predictors, or any model changes.
+
 ### 4. View results
 
 All tables (`.csv`) and figures (`.pdf`) are saved to `output/`.
@@ -142,7 +153,7 @@ All tables (`.csv`) and figures (`.pdf`) are saved to `output/`.
 | `--insample` | `120` | Burn-in period in months (Mar 1998 – Feb 2008) |
 | `--skip_mh` | off | Skip multi-horizon forecasting (h=2,3,6) |
 | `--skip_mlp` | off | Skip the feed-forward neural network (MLP, ~4 min) |
-| `--skip_robustness` | off | Skip steps 9–11 (real-time availability T11, omega T12, tree tuning T14) |
+| `--skip_robustness` | off | Skip steps 9–12 (T11 real-time, T12 omega, T14 tree tuning, T16 burn-in) |
 | `--skip_tree_tuning` | off | Skip only step 11 (T14, ~25 min) |
 | `--skip_sensitivity` | off | Skip the T8 forgetting-factor grid (the only compute-heavy extension) |
 | `--horizons` | `1,2,3,6` | Comma-separated forecast horizons |
@@ -164,6 +175,7 @@ All tables (`.csv`) and figures (`.pdf`) are saved to `output/`.
 | 9 | `07_realtime.py` | T11 real-time availability (publication-lag and market-only panels) | ~3min |
 | 10 | `08_omega.py` | T12 burn-in and recursive forward alignment factor | ~3min |
 | 11 | `09_tree_tuning.py` | T14 CV-tuned RF/XGB and hyperparameter sensitivity surfaces | ~25min |
+| 12 | `10_burnin.py` | T16 burn-in / OOS-start sensitivity and training-history variants | ~20min |
 | 8 | `06_extensions.py` | Tables T7–T10 and figure F11; T8 re-runs the DMA grid | ~12min (T8) |
 
 ---
@@ -293,6 +305,7 @@ This project was developed as a Master's thesis for the MSc Finance programme at
 ## Acknowledgements
 
 - **Prof. Thomas Cho** for supervision and guidance
+- **Xavier Marconnet** for his precious advice and improvement suggestions
 - **Anthropic Claude**, **Google Gemini** for development assistance
 
 ---
