@@ -64,6 +64,7 @@ import os
 import warnings
 from pathlib import Path
 
+from typing import Optional
 import numpy as np
 import pandas as pd
 from scipy.stats import norm, t as student_t
@@ -281,6 +282,157 @@ def make_table17_dm_power(forecasts: dict, actual: np.ndarray,
     tab = pd.DataFrame(rows)
     tab.to_csv(os.path.join(output_dir, 'T17_dm_power.csv'), index=False)
     print("  T17 saved (DM power / minimum detectable difference)")
+    return tab
+
+
+# ===========================================================================
+# T20 — Horizon decomposition (dilution benchmark, single-month targets,
+#       contribution of the lagged return)
+# ===========================================================================
+
+def make_table20_horizon_decomposition(y: np.ndarray, X: np.ndarray,
+                                       dma_result, ml_results: dict,
+                                       n_insample: int, predictor_cols: list,
+                                       output_dir: str,
+                                       dates: Optional[pd.DatetimeIndex] = None
+                                       ) -> pd.DataFrame:
+    """
+    T20: why predictability vanishes beyond one month.
+      (a) Dilution benchmark -- forecast the two-month return with the
+          stored h=1 forecast for month t and zero for month t+1 (origin
+          t-1 information only), scored against the RW on the two-month
+          return. If this beats the direct h=2 models (Table 6), the
+          second month contributes no signal.
+      (b) Single-month targets -- forecast r_{t+k} alone from origin t-1
+          for k=1,2 with Ridge and ElasticNet, purging the k intervening
+          rows from the training set (gap=k).
+      (c) Contribution of the lagged return -- re-estimate the h=1 Ridge
+          and ElasticNet with x_r_copper_lag dropped.
+    """
+    from src.ml_models import run_ridge, run_elasticnet
+    _ensure_dir(output_dir)
+    T = len(y); y_oos = y[n_insample:]
+
+    def _r2(fc, yy): return 100.0 * (1.0 - np.sum((yy - fc)**2) / np.sum(yy**2))
+
+    rows = []
+    # (a) dilution benchmark
+    y2 = np.array([100.0 * ((1 + y[t]/100) * (1 + y[t+1]/100) - 1) for t in range(T - 1)])
+    y2o = y2[n_insample:]; L = len(y2o)
+    fc1 = {'DMA': dma_result.dma_forecasts}
+    for k in ('Ridge', 'ElasticNet'):
+        if k in ml_results: fc1[k] = ml_results[k].forecasts
+    rows.append({'Exercise': 'Dilution benchmark: h=1 forecast for month t, zero for t+1, scored on 2-month return',
+                 **{k: round(_r2(v[:L], y2o), 2) for k, v in fc1.items()}})
+    # (b) single-month targets
+    for k in (1, 2):
+        ys = np.r_[y[k:], [np.nan]*k]; v = ~np.isnan(ys)
+        d = dates[v] if dates is not None else None
+        r_r = run_ridge(y=ys[v], X=X[v], n_insample=n_insample, dates=d, verbose=False, gap=k)
+        r_e = run_elasticnet(y=ys[v], X=X[v], n_insample=n_insample, dates=d, verbose=False, gap=k)
+        rows.append({'Exercise': f'Single month t+{k} from origin t-1 (gap={k})',
+                     'Ridge': round(100*r_r.r2_oos, 2), 'ElasticNet': round(100*r_e.r2_oos, 2),
+                     'EN CW p': round(r_e.cw_pval, 3)})
+    # (c) without lagged return
+    keep = [i for i, c in enumerate(predictor_cols) if c != 'x_r_copper_lag']
+    Xn = X[:, keep]
+    r_r = run_ridge(y=y, X=Xn, n_insample=n_insample, dates=dates, verbose=False)
+    r_e = run_elasticnet(y=y, X=Xn, n_insample=n_insample, dates=dates, verbose=False)
+    rows.append({'Exercise': 'h=1 without lagged copper return',
+                 'Ridge': round(100*r_r.r2_oos, 2), 'ElasticNet': round(100*r_e.r2_oos, 2)})
+    rows.append({'Exercise': 'AC(1), AC(2) of target',
+                 'Ridge': round(float(pd.Series(y).autocorr(1)), 3),
+                 'ElasticNet': round(float(pd.Series(y).autocorr(2)), 3)})
+    tab = pd.DataFrame(rows)
+    tab.to_csv(os.path.join(output_dir, 'T20_horizon_decomposition.csv'), index=False)
+    print("  T20 saved (horizon decomposition)")
+    return tab
+
+
+# ===========================================================================
+# T21 — Predictability by regime: crisis contribution and ex-ante stress
+# ===========================================================================
+
+CRISIS_WINDOWS = [('2008-09-01', '2009-06-30'), ('2020-01-01', '2020-12-31'),
+                  ('2022-01-01', '2022-12-31')]
+
+
+def _cw_oneside(fc, y, bw=5):
+    from scipy.stats import norm
+    c = y**2 - (y - fc)**2 + fc**2; T = len(c); m = c.mean(); d = c - m
+    v = np.sum(d**2) / T
+    for l in range(1, bw + 1):
+        v += 2 * (1 - l/(bw+1)) * np.sum(d[l:] * d[:-l]) / T
+    s = m / np.sqrt(v / T)
+    return float(s), float(1 - norm.cdf(s))
+
+
+def make_table21_regimes(df: pd.DataFrame, dma_result, ml_results: dict,
+                         hybrid_results: dict, n_insample: int, output_dir: str,
+                         q: float = 0.75, roll_window: int = 36) -> pd.DataFrame:
+    """
+    T21: is the full-sample R^2 'normal' predictability?
+      Panel A  ex-post crisis windows: conditional R^2, and the share of each
+               model's total SFE reduction vs RW earned in crisis months.
+      Panel B  ex-ante stress states, classified with information at the
+               forecast origin only: VIX_{t-1} (already in x_t) above the
+               q-quantile of its own expanding history; and trailing
+               12-month realised copper volatility above its expanding
+               q-quantile. Conditional R^2 and calm-state CW per model.
+      Also: rolling `roll_window`-month R^2 paths (T21_rolling_r2.csv).
+    """
+    _ensure_dir(output_dir)
+    y = np.asarray(dma_result.actual); d = pd.DatetimeIndex(dma_result.dates); N = len(y)
+    fc = {'DMA': dma_result.dma_forecasts}
+    for k in ('Ridge', 'ElasticNet'):
+        if k in ml_results: fc[k] = ml_results[k].forecasts
+    if 'Combo_DMA_EN' in hybrid_results: fc['Combo'] = hybrid_results['Combo_DMA_EN'].forecasts
+
+    def _r2(f, yy): return 100.0 * (1.0 - np.sum((yy - f)**2) / np.sum(yy**2))
+
+    crisis = np.zeros(N, bool)
+    for a, b in CRISIS_WINDOWS: crisis |= (d >= a) & (d <= b)
+
+    full = df.set_index('date')
+    vix_hist = full['x_VIX']                       # lagged one month already
+    vix = vix_hist.loc[d].values
+    thr = np.array([vix_hist.loc[:dt].iloc[:-1].quantile(q) for dt in d])
+    hi_vix = vix > thr
+    rv = full[TARGET_COL if 'TARGET_COL' in globals() else 'r_copper'].rolling(12).std().shift(1)
+    rv_o = rv.loc[d].values
+    thr_rv = np.array([rv.loc[:dt].dropna().iloc[:-1].quantile(q) for dt in d])
+    hi_rv = rv_o > thr_rv
+
+    rows = []
+    for name, f in fc.items():
+        gain = y**2 - (y - f)**2
+        rows.append({'Panel': 'A ex-post crisis', 'Model': name,
+                     'Full R2': round(_r2(f, y), 2),
+                     'High R2': round(_r2(f[crisis], y[crisis]), 2), 'N high': int(crisis.sum()),
+                     'Low R2': round(_r2(f[~crisis], y[~crisis]), 2), 'N low': int((~crisis).sum()),
+                     'SFE share high (%)': round(100 * gain[crisis].sum() / gain.sum(), 1),
+                     'CW low': round(_cw_oneside(f[~crisis], y[~crisis])[0], 2)})
+    for lab, m, flagged in [('B(i) ex-ante VIX', hi_vix, int((hi_vix & crisis).sum())),
+                            ('B(ii) ex-ante copper vol', hi_rv, int((hi_rv & crisis).sum()))]:
+        for name, f in fc.items():
+            rows.append({'Panel': lab, 'Model': name, 'Full R2': round(_r2(f, y), 2),
+                         'High R2': round(_r2(f[m], y[m]), 2), 'N high': int(m.sum()),
+                         'Low R2': round(_r2(f[~m], y[~m]), 2), 'N low': int((~m).sum()),
+                         'SFE share high (%)': np.nan, 'CW low': round(_cw_oneside(f[~m], y[~m])[0], 2),
+                         'Crisis months flagged': flagged})
+    tab = pd.DataFrame(rows)
+    tab.loc[tab.Panel == 'A ex-post crisis', 'Share of months (%)'] = round(100 * crisis.mean(), 1)
+    tab.loc[tab.Panel == 'A ex-post crisis', 'Share of squared returns (%)'] = round(100 * np.sum(y[crisis]**2) / np.sum(y**2), 1)
+
+    roll = pd.DataFrame({f'roll{roll_window}_{k}': [_r2(f[i-roll_window:i], y[i-roll_window:i])
+                                                   for i in range(roll_window, N + 1)]
+                         for k, f in fc.items()}, index=d[roll_window-1:])
+
+    tab.to_csv(os.path.join(output_dir, 'T21_regime_table.csv'), index=False)
+    pd.DataFrame({'date': d, 'crisis': crisis, 'hi_vix': hi_vix, 'hi_rv': hi_rv, **fc, 'actual': y}
+                 ).to_csv(os.path.join(output_dir, 'T21_regime_forecasts.csv'), index=False)
+    roll.to_csv(os.path.join(output_dir, 'T21_rolling_r2.csv'))
+    print("  T21 saved (regime table, flags, rolling R2)")
     return tab
 
 
@@ -683,6 +835,18 @@ def run_all_extensions(df: pd.DataFrame,
     out['T13'] = make_table13_dma_dms(dma_result, output_dir)
     print(out['T13'].to_string(index=False))
 
+    # ── T20: horizon decomposition (Ridge/EN re-fits, ~30s) ──────────────
+    print("\nT20: Horizon decomposition")
+    out['T20'] = make_table20_horizon_decomposition(
+        y, X, dma_result, ml_results, n_insample, predictor_cols, output_dir, dates=dates)
+    print(out['T20'].to_string(index=False))
+
+    # ── T21: predictability by regime (ex-post and ex-ante) ───────────────
+    print("\nT21: Predictability by regime")
+    out['T21'] = make_table21_regimes(df, dma_result, ml_results, hybrid_results,
+                                      n_insample, output_dir)
+    print(out['T21'].to_string(index=False))
+
     # ── T10: predictor correlation matrix ────────────────────────────────
     print("\nT10: Predictor correlation matrix")
     out['T10'] = make_table10_correlation(df, predictor_cols, output_dir)
@@ -696,6 +860,13 @@ def run_all_extensions(df: pd.DataFrame,
         print(out['T8'].to_string())
     else:
         print("\nT8: Forgetting-factor sensitivity [SKIPPED — run_sensitivity=False]")
+
+    # ── F13: rolling R2 by regime (needs T21) ─────────────────────────────
+    try:
+        from src.evaluation import plot_f13_rolling_r2_regimes
+        plot_f13_rolling_r2_regimes(dma_result, output_dir)
+    except Exception as exc:
+        print(f"  [warning] F13 not produced: {exc}")
 
     print("\nAll Tier-1 extensions complete. Outputs in:", output_dir)
     return out

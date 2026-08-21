@@ -629,6 +629,40 @@ def plot_f12_rolling_hit_rate(dma_result, ml_results: dict, hybrid_results: dict
     return sub
 
 
+
+def plot_f13_rolling_r2_regimes(dma_result, output_dir: str, window: int = 36) -> None:
+    """
+    F13: 36-month rolling out-of-sample R^2 (DMA and Combo) with crisis
+    shading and ex-ante high-VIX months ticked along the bottom. Reads the
+    series written by make_table21_regimes (T21_rolling_r2.csv and
+    T21_regime_forecasts.csv); silently skips if they are absent.
+    """
+    p_roll = os.path.join(output_dir, 'T21_rolling_r2.csv')
+    p_flag = os.path.join(output_dir, 'T21_regime_forecasts.csv')
+    if not (os.path.exists(p_roll) and os.path.exists(p_flag)):
+        print("    F13 skipped: run make_table21_regimes first"); return
+    roll = pd.read_csv(p_roll, index_col=0, parse_dates=True)
+    flag = pd.read_csv(p_flag, parse_dates=['date'])
+    d = pd.DatetimeIndex(flag['date']); full_r2 = 100 * dma_result.r2_oos['DMA']
+    with plt.rc_context(THESIS_STYLE):
+        fig, ax = plt.subplots(figsize=(12, 4.2))
+        ax.plot(roll.index, roll[f'roll{window}_DMA'], color=COLOURS['dma'], lw=1.5,
+                label=f'DMA, {window}-month rolling $R^2_{{os}}$')
+        if f'roll{window}_Combo' in roll:
+            ax.plot(roll.index, roll[f'roll{window}_Combo'], color=COLOURS['combo'], lw=1.1, ls=':',
+                    label='Combo DMA+EN')
+        ax.axhline(full_r2, color=COLOURS['rw'], lw=0.9, ls='--',
+                   label=f'Full-sample DMA $R^2_{{os}}$ ({full_r2:.1f}%)')
+        ax.axhline(0, color=COLOURS['rw'], lw=0.8)
+        _add_event_shading(ax, d)
+        ax.vlines(d[flag['hi_vix'].values], -18, -15, color=COLOURS['actual'], lw=1.2,
+                  label='VIX$_{t-1}$ above expanding 75th pct (ex ante)')
+        ax.set_ylim(-20, 50); ax.set_ylabel('Out-of-sample $R^2$ (%)')
+        ax.legend(loc='upper right', framealpha=0.85, ncol=2, fontsize=8)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+        _save_fig(fig, os.path.join(output_dir, 'F13_rolling_r2_regimes.png'))
+
+
 def plot_f5_scatter_dma(dma_result, output_dir: str) -> None:
     """F5: Scatter plot of DMA predicted vs actual returns."""
     dma_fc = dma_result.dma_forecasts

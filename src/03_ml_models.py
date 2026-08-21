@@ -217,7 +217,7 @@ def run_ols(y: np.ndarray, X: np.ndarray, n_insample: int,
 
 def run_ridge(y: np.ndarray, X: np.ndarray, n_insample: int,
               dates: Optional[pd.DatetimeIndex] = None,
-              verbose: bool = True) -> MLResult:
+              verbose: bool = True, gap: int = 0) -> MLResult:
     """
     Ridge regression (L2 regularisation).
 
@@ -235,16 +235,17 @@ def run_ridge(y: np.ndarray, X: np.ndarray, n_insample: int,
 
     for i in range(T_oos):
         t  = n_insample + i
+        t_train = t - gap  # last usable training row (exclusive); gap = h-1 for overlapping targets
         sc = StandardScaler()
-        Xtr = sc.fit_transform(X[:t])
+        Xtr = sc.fit_transform(X[:t_train])
         Xte = sc.transform(X[t:t+1])
 
         if i % TUNE_EVERY == 0:
             tscv  = TimeSeriesSplit(n_splits=3)
-            m_cv  = RidgeCV(alphas=alphas, cv=tscv).fit(Xtr, y[:t])
+            m_cv  = RidgeCV(alphas=alphas, cv=tscv).fit(Xtr, y[:t_train])
             alpha = float(m_cv.alpha_)
 
-        m = Ridge(alpha=alpha).fit(Xtr, y[:t])
+        m = Ridge(alpha=alpha).fit(Xtr, y[:t_train])
         fc[i] = float(m.predict(Xte)[0])
         coef_path[i] = np.concatenate([[m.intercept_], m.coef_])
 

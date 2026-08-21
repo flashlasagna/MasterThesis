@@ -1,0 +1,13 @@
+Panel,Model,Full R2,High R2,N high,Low R2,N low,SFE share high (%),CW low,Crisis months flagged,Share of months (%),Share of squared returns (%)
+A ex-post crisis,DMA,30.16,43.36,34,18.79,182,66.5,3.9,,15.7,46.3
+A ex-post crisis,Ridge,29.51,48.36,34,13.26,182,75.9,4.9,,15.7,46.3
+A ex-post crisis,ElasticNet,29.01,47.35,34,13.2,182,75.6,4.89,,15.7,46.3
+A ex-post crisis,Combo,31.15,46.89,34,17.59,182,69.7,4.38,,15.7,46.3
+B(i) ex-ante VIX,DMA,30.16,45.05,45,12.92,171,,3.49,26.0,,
+B(i) ex-ante VIX,Ridge,29.51,47.59,45,8.58,171,,4.66,26.0,,
+B(i) ex-ante VIX,ElasticNet,29.01,47.44,45,7.66,171,,4.59,26.0,,
+B(i) ex-ante VIX,Combo,31.15,47.63,45,12.07,171,,4.05,26.0,,
+B(ii) ex-ante copper vol,DMA,30.16,43.63,35,19.72,181,,4.38,14.0,,
+B(ii) ex-ante copper vol,Ridge,29.51,45.98,35,16.73,181,,5.2,14.0,,
+B(ii) ex-ante copper vol,ElasticNet,29.01,44.6,35,16.9,181,,5.14,14.0,,
+B(ii) ex-ante copper vol,Combo,31.15,45.32,35,20.16,181,,4.91,14.0,,
