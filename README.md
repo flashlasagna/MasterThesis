@@ -3,8 +3,8 @@
 **Master of Science in Finance — Master Thesis**
 *HEC Lausanne, University of Lausanne*
 
-**Author:** Ruben Mimouni
-**Supervisor:** Prof. Thomas Cho
+**Author:** Ruben Mimouni\
+**Supervisor:** Prof. Thomas Cho\
 **Expert Advisor:** Xavier Marconnet
 **Submission:** August 2026
 
@@ -216,7 +216,7 @@ The feed-forward network (`run_mlp` in `03_ml_models.py`) is a single-hidden-lay
 `main.py` pickles the estimated results after step 6 to `output/_cache_results.pkl`. Result dataclasses are converted to plain dicts via `src/cache_utils.py` because the numbered modules are loaded through aliases and their classes are not importable by pickle; `rerun_outputs.py` rebuilds them as attribute-style objects.
 
 ### XGBoost reproducibility
-XGBoost's histogram tree builder is not bit-reproducible across library versions and platforms; the same specification returned 12.54% under an earlier environment and 15.39% under the pinned `xgboost==2.0.3`. All reported figures use the pinned version. Every other model reproduces exactly.
+XGBoost's histogram tree builder is not bit-reproducible across library versions and platforms; the same specification returned 12.54% under an earlier environment and 15.39% under the pinned `xgboost==2.0.3`. All reported figures use the pinned version.
 
 ### Import aliases
 Python cannot import modules whose filenames start with a digit. The `pipeline.py`, `dma_dms.py`, etc. files in `src/` are thin aliases that dynamically load the corresponding numbered files. Both versions must be present in `src/`.
