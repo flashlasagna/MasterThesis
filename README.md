@@ -101,7 +101,7 @@ Put all 22 `.xlsx` files in the `data/` folder.
 python main.py --data data/ --output output/ --skip_mh --skip_sensitivity --skip_mlp --skip_robustness
 ```
 
-**Full run** (everything; ~90 min single-core):
+**Full run** (everything; ~60 min single-core):
 ```bash
 python main.py --data data/ --output output/
 ```
