@@ -1,0 +1,10 @@
+Variant,k,Model,MSFE,R2_oos (%),CW-stat,p-value,dR2 vs baseline (pp)
+baseline,18,DMA,23.427,30.16,3.125,0.0009,0.0
+baseline,18,Ridge,23.647,29.51,2.985,0.0014,0.0
+baseline,18,ElasticNet,23.816,29.01,3.208,0.0007,0.0
+publag,18,DMA,23.441,30.12,2.764,0.0029,-0.04
+publag,18,Ridge,23.543,29.82,2.996,0.0014,0.31
+publag,18,ElasticNet,23.684,29.4,3.237,0.0006,0.39
+market,16,DMA,22.722,32.27,2.866,0.0021,2.11
+market,16,Ridge,23.25,30.69,3.114,0.0009,1.18
+market,16,ElasticNet,23.454,30.08,3.263,0.0006,1.07

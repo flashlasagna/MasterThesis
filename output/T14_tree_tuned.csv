@@ -1,0 +1,5 @@
+Model,Hyperparameter choice,Setting,R2_oos (%)
+RandomForest,fixed ex ante (baseline),"depth=4, leaf=5, 200 trees",21.23
+RandomForest,TimeSeriesSplit-tuned,"depth∈{2,4,6,∞}, leaf∈{2,5,20}",22.66
+XGBoost,fixed ex ante (baseline),"rounds=100, depth=3, lr=0.05",13.6
+XGBoost,TimeSeriesSplit-tuned,"rounds∈{50..400}, depth∈{2,3,4}, lr∈{.01,.05,.1}",19.96
