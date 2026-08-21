@@ -11,7 +11,7 @@
 
 ## Overview
 
-This thesis replicates and extends the Dynamic Model Averaging and Selection (DMA/DMS) framework of Buncic & Moretto (2015) for forecasting monthly CME copper returns. The original paper uses 18 predictor variables and a Kalman filter-based model averaging approach over 2^18 = 262,144 candidate models. We extend the out-of-sample evaluation period to February 2026, introduce five machine learning benchmarks, propose a hybrid framework combining DMA with ML forecasts, and add a set of robustness and value-added extensions (pairwise Diebold-Mariano tests, forgetting-factor sensitivity, directional accuracy, and a predictor correlation matrix).
+This thesis replicates and extends the Dynamic Model Averaging and Selection (DMA/DMS) framework of Buncic & Moretto (2015) for forecasting monthly CME copper returns. The original paper uses 18 predictor variables and a Kalman filter-based model averaging approach over 2^18 = 262,144 candidate models. We extend the out-of-sample evaluation period to February 2026, introduce seven machine learning benchmarks (Ridge, LASSO, Elastic Net, Bayesian Ridge, Random Forest, XGBoost, and a feed-forward neural network), propose a hybrid framework combining DMA with ML forecasts, and add a set of robustness and value-added extensions (pairwise Diebold-Mariano tests, forgetting-factor sensitivity, directional accuracy, and a predictor correlation matrix).
 
 **Key findings:**
 - DMA achieves out-of-sample R² = 30.16% (March 2008 – February 2026)
@@ -111,30 +111,20 @@ MasterThesis/
 pip install pandas numpy scipy scikit-learn xgboost matplotlib openpyxl
 ```
 
-For LSTM support (optional, slow on CPU):
-```bash
-pip install torch
-```
-
 ### 2. Place data files
 
 Put all 22 `.xlsx` files in the `data/` folder.
 
 ### 3. Run the pipeline
 
-**Fast run** (skips LSTM, multi-horizon, and the heavy forgetting-factor grid):
+**Fast run** (skips multi-horizon, the forgetting-factor grid, and the robustness steps 9–11):
 ```bash
-python main.py --data data/ --output output/ --skip_lstm --skip_mh --skip_sensitivity
+python main.py --data data/ --output output/ --skip_mh --skip_sensitivity --skip_robustness
 ```
 
-**Full run** (includes multi-horizon h=2,3,6 and the T8 sensitivity grid):
+**Full run** (multi-horizon h=2,3,6, T8 grid, and robustness tables T11, T12, T14; ~60 min):
 ```bash
 python main.py --data data/ --output output/
-```
-
-**Full run with LSTM**:
-```bash
-python main.py --data data/ --output output/ --horizons 1,2,3,6
 ```
 
 ### 4. View results
@@ -151,7 +141,9 @@ All tables (`.csv`) and figures (`.pdf`) are saved to `output/`.
 | `--output` | `output/` | Path for saving tables and figures |
 | `--insample` | `120` | Burn-in period in months (Mar 1998 – Feb 2008) |
 | `--skip_mh` | off | Skip multi-horizon forecasting (h=2,3,6) |
-| `--skip_lstm` | off | Skip LSTM model (requires PyTorch) |
+| `--skip_mlp` | off | Skip the feed-forward neural network (MLP, ~4 min) |
+| `--skip_robustness` | off | Skip steps 9–11 (real-time availability T11, omega T12, tree tuning T14) |
+| `--skip_tree_tuning` | off | Skip only step 11 (T14, ~25 min) |
 | `--skip_sensitivity` | off | Skip the T8 forgetting-factor grid (the only compute-heavy extension) |
 | `--horizons` | `1,2,3,6` | Comma-separated forecast horizons |
 
@@ -164,10 +156,14 @@ All tables (`.csv`) and figures (`.pdf`) are saved to `output/`.
 | 1 | `01_pipeline.py` | Load 22 xlsx files, construct 18 predictors, apply 1-month lag | ~3s |
 | 2 | `02_dma_dms.py` | DMA/DMS over 262,144 models via Kalman filter (h=1) | ~75s |
 | 3 | `02_dma_dms.py` | DMA/DMS at h=2,3,6 | ~3.5min |
-| 4 | `03_ml_models.py` | Ridge, LASSO, EN, BayesRidge, RF, XGBoost, (LSTM) | ~75s |
+| 4 | `03_ml_models.py` | OLS, Ridge, LASSO, EN, BayesRidge, RF, XGBoost, MLP | ~5min |
 | 5 | `03_ml_models.py` | Multi-horizon Elastic Net | ~15s |
 | 6 | `04_hybrid.py` | PIP-EN, Stacking, Equal-weight combo | ~5s |
 | 7 | `05_evaluation.py` | Tables T1–T6 and figures F1–F10 | ~12s |
+| 8 | `06_extensions.py` | T7 DM-HLN, T8 forgetting factors, T9 directional, T10 correlation, T13 DMA-vs-DMS diagnostics | ~4min |
+| 9 | `07_realtime.py` | T11 real-time availability (publication-lag and market-only panels) | ~3min |
+| 10 | `08_omega.py` | T12 burn-in and recursive forward alignment factor | ~3min |
+| 11 | `09_tree_tuning.py` | T14 CV-tuned RF/XGB and hyperparameter sensitivity surfaces | ~25min |
 | 8 | `06_extensions.py` | Tables T7–T10 and figure F11; T8 re-runs the DMA grid | ~12min (T8) |
 
 ---
@@ -203,12 +199,13 @@ invariant to its exact value.
 ### Import aliases
 Python cannot import modules whose filenames start with a digit. The `pipeline.py`, `dma_dms.py`, etc. files in `src/` are thin aliases that dynamically load the corresponding numbered files. Both versions must be present in `src/`.
 
-### LSTM implementation
-An LSTM benchmark is implemented (`--skip_lstm` to disable) but deliberately
-excluded from the thesis: with 336 monthly observations the network cannot be
-trained robustly, and its results will be too unstable to be informative.
-
-Its inclusion in the main pipeline allows future researchers to easily test more sophisticated deep learning architectures (e.g. transformers) on more frequent data (e.g. daily) without having to re-implement the entire data pipeline and evaluation framework.
+### Neural network benchmark
+The feed-forward network (`run_mlp` in `03_ml_models.py`) is a single-hidden-layer
+MLP fitted by L-BFGS, averaged over five random initialisations at every step,
+with width and L2 penalty re-selected annually by `TimeSeriesSplit` CV — the same
+protocol as the penalised regressions. Preliminary runs with weak penalties
+(alpha <= 10) overfit severely; the penalty grid therefore runs from 10 to 1000.
+See thesis Section 4.2.4 and the alpha sweep in `T15_mlp_alpha_sweep.csv`.
 
 ---
 
@@ -276,10 +273,9 @@ pandas>=2.0.0
 numpy>=1.24.0
 scipy>=1.10.0
 scikit-learn>=1.3.0
-xgboost>=2.0.0
+xgboost==2.0.3        # pinned: histogram builder is not bit-reproducible across versions
 matplotlib>=3.7.0
 openpyxl>=3.1.0
-torch>=2.0.0          # optional, for LSTM
 ```
 
 ---
