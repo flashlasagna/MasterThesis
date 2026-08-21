@@ -33,6 +33,12 @@ Pipeline steps
     Step 5  Multi-horizon ML       src/ml_models.py   [skippable with --skip_mh]
     Step 6  Hybrid models          src/hybrid.py
     Step 7  Full evaluation        src/evaluation.py
+    Step 8  Tier-1 extensions      src/extensions.py   (T7–T10, T13)
+    Step 9  Real-time availability src/realtime.py     (T11)       [skippable with --skip_robustness]
+    Step 10 Omega estimation       src/omega.py        (T12)       [skippable with --skip_robustness]
+    Step 11 Tree hyperparameters   src/tree_tuning.py  (T14)       [skippable with --skip_robustness / --skip_tree_tuning]
+
+Estimated runtime of steps 9–11: ~6 min (9+10) + ~25 min (11) single-core.
 
 Estimated runtime (without LSTM, without multi-horizon):
     ~5-7 minutes on a modern laptop
@@ -61,6 +67,9 @@ from src.ml_models   import run_all_ml_models, print_ml_table
 from src.hybrid      import run_all_hybrids, print_hybrid_table
 from src.evaluation  import run_full_evaluation
 from src.extensions  import run_all_extensions
+from src.realtime    import run_realtime_robustness
+from src.omega       import run_omega_robustness
+from src.tree_tuning import run_tree_tuning
 
 import numpy as np
 import pandas as pd
@@ -83,6 +92,10 @@ def parse_args():
                    help='Skip LSTM model (requires PyTorch; slow on CPU)')
     p.add_argument('--skip_sensitivity', action='store_true',
                    help='Skip the T8 forgetting-factor grid (the only heavy extension)')
+    p.add_argument('--skip_robustness', action='store_true',
+                   help='Skip the reviewer-robustness steps 9-11 (T11, T12, T14)')
+    p.add_argument('--skip_tree_tuning', action='store_true',
+                   help='Skip only the tree hyperparameter step 11 (T14, ~25 min)')
     p.add_argument('--horizons',  default='1,2,3,6',
                    help='Comma-separated forecast horizons (default: 1,2,3,6)')
     return p.parse_args()
@@ -137,6 +150,7 @@ def main():
     print(f"  Horizons   : {horizons}")
     print(f"  LSTM       : {'yes' if include_lstm else 'no (--skip_lstm)'}")
     print(f"  Multi-horiz: {'no (--skip_mh)' if args.skip_mh else 'yes'}")
+    print(f"  Robustness : {'no (--skip_robustness)' if args.skip_robustness else 'yes (steps 9-11)'}")
 
     # ── Step 1: Build dataset ────────────────────────────────────────────────
     _step(1, "Building dataset")
@@ -275,6 +289,36 @@ def main():
     )
     print(f"  Elapsed: {_elapsed(t0)}")
 
+    # ── Step 9: Real-time availability of predictors (T11) ───────────────────
+    if not args.skip_robustness:
+        _step(9, "Real-time availability robustness — publication lags (T11)")
+        t0 = time.time()
+        run_realtime_robustness(df, n_insample=n_insample,
+                                output_dir=output_dir, verbose=True)
+        print(f"  Elapsed: {_elapsed(t0)}")
+    else:
+        _step(9, "Real-time availability robustness [SKIPPED]")
+
+    # ── Step 10: Forward alignment factor omega (T12) ────────────────────────
+    if not args.skip_robustness:
+        _step(10, "Forward alignment factor — burn-in and recursive omega (T12)")
+        t0 = time.time()
+        run_omega_robustness(data_dir, n_insample=n_insample,
+                             output_dir=output_dir, verbose=True)
+        print(f"  Elapsed: {_elapsed(t0)}")
+    else:
+        _step(10, "Forward alignment factor robustness [SKIPPED]")
+
+    # ── Step 11: Tree hyperparameter validation (T14) ────────────────────────
+    if not (args.skip_robustness or args.skip_tree_tuning):
+        _step(11, "Tree hyperparameters — CV-tuned variants and sensitivity (T14)")
+        t0 = time.time()
+        run_tree_tuning(df, n_insample=n_insample,
+                        output_dir=output_dir, verbose=True)
+        print(f"  Elapsed: {_elapsed(t0)}")
+    else:
+        _step(11, "Tree hyperparameter validation [SKIPPED]")
+
     # ── Summary ──────────────────────────────────────────────────────────────
     _header("Pipeline complete")
     print(f"  Total runtime : {_elapsed(t_total)}")
@@ -288,7 +332,9 @@ def main():
         print(f"    Combo DMA+EN      :  {hybrid_results['Combo_DMA_EN'].r2_oos*100:.2f}%")
     print(f"    Random Walk       :   0.00%  (benchmark)")
     print()
-    print("  Tables saved  : T1–T10 (.csv)")
+    print("  Tables saved  : T1–T10, T13 (.csv)"
+          + ("" if args.skip_robustness else ", T11, T12")
+          + ("" if (args.skip_robustness or args.skip_tree_tuning) else ", T14"))
     print("  Figures saved : F1–F11 (.pdf)")
 
 

@@ -111,6 +111,13 @@ class DMAResult:
     cw_pval         : dict = field(default_factory=dict)
     params          : dict = field(default_factory=dict)
     runtime_seconds : float = 0.0
+    # Model-probability diagnostics at each OOS origin (added for Section 5.1)
+    #   'pi_max'     : probability of the DMS-selected (top) model
+    #   'n_eff'      : effective number of models, 1 / sum_m pi_m^2
+    #   'top_model'  : index of the DMS-selected model
+    #   'top_size'   : number of predictors in the DMS-selected model
+    #   'mass_top10' : cumulative probability of the 10 most probable models
+    diagnostics     : dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +289,14 @@ def run_dma_dms(y: np.ndarray,
     # Historical average benchmark (expanding window)
     ha_fc = np.zeros(T_oos)
 
+    # Model-probability diagnostics
+    diag_pi_max   = np.zeros(T_oos)
+    diag_n_eff    = np.zeros(T_oos)
+    diag_top      = np.zeros(T_oos, dtype=np.int64)
+    diag_top_size = np.zeros(T_oos, dtype=np.int64)
+    diag_mass10   = np.zeros(T_oos)
+    model_size    = inclusion[:, 1:].sum(axis=1)
+
     # ── Main loop ─────────────────────────────────────────────────────────
     oos_idx = 0
 
@@ -313,6 +328,13 @@ def run_dma_dms(y: np.ndarray,
 
             # TVP: full model forecast (uses beta_tvp from the last update)
             tvp_fc[oos_idx] = y_hat_tvp
+
+            # Diagnostics on the prior model-probability vector
+            diag_pi_max[oos_idx]   = float(pi_pred[best_m])
+            diag_n_eff[oos_idx]    = float(1.0 / np.sum(pi_pred**2))
+            diag_top[oos_idx]      = best_m
+            diag_top_size[oos_idx] = int(model_size[best_m])
+            diag_mass10[oos_idx]   = float(np.sort(pi_pred)[-10:].sum())
 
             # Historical average over COMPLETED windows only: y[s] is fully
             # observed at origin t iff s + h - 1 <= t - 1, i.e. s < t-h+1
@@ -434,6 +456,9 @@ def run_dma_dms(y: np.ndarray,
                            'k': k, 'M': M, 'T': T,
                            'n_insample': n_insample, 'T_oos': T_oos},
         runtime_seconds = runtime,
+        diagnostics     = {'pi_max': diag_pi_max, 'n_eff': diag_n_eff,
+                           'top_model': diag_top, 'top_size': diag_top_size,
+                           'mass_top10': diag_mass10},
     )
 
     return result

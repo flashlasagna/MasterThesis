@@ -448,6 +448,97 @@ def make_table10_correlation(df: pd.DataFrame,
 # Master runner
 # ===========================================================================
 
+
+# ---------------------------------------------------------------------------
+# T13 — DMA vs DMS: model-probability diagnostics and sub-period comparison
+# ---------------------------------------------------------------------------
+
+SUBPERIODS_T13 = [
+    ('GFC',          '2008-09-01', '2009-06-30'),
+    ('Recovery',     '2009-07-01', '2019-12-31'),
+    ('COVID-19',     '2020-01-01', '2020-12-31'),
+    ('Supercycle',   '2021-01-01', '2021-12-31'),
+    ('Ukraine shock','2022-01-01', '2022-12-31'),
+    ('Post-shock',   '2023-01-01', '2026-02-28'),
+    ('Full OOS',     '2008-03-01', '2026-02-28'),
+]
+
+
+def make_table13_dma_dms(dma_result, output_dir: str) -> pd.DataFrame:
+    """
+    T13: Why DMA beats DMS — diagnostics on the prior model-probability
+    vector at each forecast origin (recorded in DMAResult.diagnostics) and
+    a sub-period comparison of the two estimators.
+
+    Columns
+    -------
+    pi_max (%)   mean prior probability of the DMS-selected (top) model
+    N_eff        mean effective number of models, 1 / sum_m pi_m^2
+    Switch (%)   share of month-to-month transitions inside the period in
+                 which the DMS-selected model changes
+    DMA / DMS R2 out-of-sample R^2 vs random walk, in percent
+
+    Also saves the full monthly diagnostic path and prints the DMA-vs-DMS
+    HLN-corrected Diebold-Mariano test over the full window.
+    """
+    _ensure_dir(output_dir)
+    d     = dma_result.diagnostics
+    dates = pd.DatetimeIndex(dma_result.dates)
+    y     = np.asarray(dma_result.actual)
+    dma   = np.asarray(dma_result.dma_forecasts)
+    dms   = np.asarray(dma_result.dms_forecasts)
+    M     = float(dma_result.params['M'])
+
+    def _r2(fc, yy):
+        return 100.0 * (1.0 - np.sum((yy - fc)**2) / np.sum(yy**2))
+
+    switch = (np.diff(d['top_model']) != 0)
+    rows = []
+    for label, a, b in SUBPERIODS_T13:
+        m  = (dates >= a) & (dates <= b)
+        mm = m[:-1] & m[1:]                      # transitions inside period
+        rows.append({
+            'Period':       label,
+            'N':            int(m.sum()),
+            'pi_max (%)':   round(100.0 * d['pi_max'][m].mean(), 4),
+            'N_eff':        int(round(d['n_eff'][m].mean())),
+            'Switch (%)':   round(100.0 * switch[mm].mean(), 1) if mm.any() else np.nan,
+            'DMA R2 (%)':   round(_r2(dma[m], y[m]), 2),
+            'DMS R2 (%)':   round(_r2(dms[m], y[m]), 2),
+        })
+    tab = pd.DataFrame(rows)
+
+    # Headline diagnostics and DMA-vs-DMS DM test (full window)
+    dm = diebold_mariano_hln(y - dma, y - dms, h=1)
+    headline = {
+        'pi_max_mean (%)':        100.0 * d['pi_max'].mean(),
+        'pi_max_max (%)':         100.0 * d['pi_max'].max(),
+        'pi_max_mean / uniform':  d['pi_max'].mean() * M,
+        'N_eff_mean':             d['n_eff'].mean(),
+        'N_eff_min':              d['n_eff'].min(),
+        'N_eff_mean_share (%)':   100.0 * d['n_eff'].mean() / M,
+        'mass_top10_max (%)':     100.0 * d['mass_top10'].max(),
+        'switch_rate (%)':        100.0 * switch.mean(),
+        'top_size_mean':          d['top_size'].mean(),
+        'sd_fc_DMA':              dma.std(),
+        'sd_fc_DMS':              dms.std(),
+        'DMS_abs_err_larger (%)': 100.0 * np.mean(np.abs(y - dms) > np.abs(y - dma)),
+        'DM_HLN_stat':            dm['hln_stat'],
+        'DM_p_value':             dm['p_value'],
+    }
+
+    tab.to_csv(os.path.join(output_dir, 'T13_dma_dms_subperiod.csv'), index=False)
+    pd.Series(headline).to_csv(os.path.join(output_dir, 'T13_dma_dms_headline.csv'),
+                               header=['value'])
+    pd.DataFrame({'date': dates, **{k: v for k, v in d.items()},
+                  'dma_fc': dma, 'dms_fc': dms, 'actual': y}).to_csv(
+        os.path.join(output_dir, 'T13_dma_dms_diagnostics.csv'), index=False)
+
+    print("  T13 saved (sub-period table, headline diagnostics, monthly path)")
+    print(f"  DMA vs DMS: HLN stat = {dm['hln_stat']:.3f}, p = {dm['p_value']:.3f}")
+    return tab
+
+
 def _collect_top_forecasts(dma_result, ml_results, hybrid_results) -> dict:
     """
     Assemble the forecast dict for the 'top models' comparison used by T7.
@@ -536,6 +627,11 @@ def run_all_extensions(df: pd.DataFrame,
     all_fc = _collect_all_forecasts(dma_result, ml_results, hybrid_results)
     out['T9'] = make_table9_directional(all_fc, actual, output_dir)
     print(out['T9'].to_string())
+
+    # ── T13: DMA vs DMS diagnostics (cheap; uses recorded probabilities) ─
+    print("\nT13: DMA vs DMS — model-probability diagnostics")
+    out['T13'] = make_table13_dma_dms(dma_result, output_dir)
+    print(out['T13'].to_string(index=False))
 
     # ── T10: predictor correlation matrix ────────────────────────────────
     print("\nT10: Predictor correlation matrix")
