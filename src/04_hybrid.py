@@ -1,691 +1,587 @@
 """
-06_extensions.py
-================
-Tier-1 robustness and value-added extensions for "Forecasting Copper Prices:
-A Replication and ML Extension of Buncic & Moretto (2015)".
+04_hybrid.py
+============
+Hybrid DMA-ML framework for copper return forecasting.
 
-These analyses sharpen and defend the thesis's central claims without altering
-the core pipeline. All four read directly from the result objects already
-produced by 02_dma_dms.py, 03_ml_models.py, and 04_hybrid.py — only the
-forgetting-factor sensitivity (T8) re-runs the DMA engine.
+This module combines the DMA/DMS econometric framework with machine learning
+models in three principled ways. The goal is not to guarantee improvement
+over DMA alone, but to explore whether ML methods can complement the
+time-varying Bayesian approach.
 
-Extensions
-----------
-T7  Pairwise Diebold-Mariano tests (HLN small-sample correction)
-        Tests whether differences AMONG the top performers (DMA, Ridge,
-        Elastic Net, Combo) are statistically significant. Sharpens the
-        "convergence" claim from "close" to "statistically indistinguishable".
-        NOTE: pairwise DM is valid here because these models are NOT nested in
-        each other (DMA is not a special case of Ridge). This is distinct from
-        comparison against the random walk, which IS nested and requires the
-        Clark-West correction used in Table 2.
+Hybrid variants
+---------------
+1.  PIP-Weighted Features (PIP-EN)
+    Multiplies each predictor X_j by its current posterior inclusion
+    probability PIP_j from DMA before fitting an ElasticNet model.
+    Effect: DMA's time-varying model uncertainty acts as a soft variable
+    selection signal for the linear model. Predictors that DMA currently
+    deems irrelevant receive near-zero weight; highly included predictors
+    retain full weight.
+    Natural pairing: linear models only (PIP weighting is meaningless for
+    tree-based methods, which split on variable rank not scale).
 
-T8  Forgetting-factor sensitivity table
-        DMA out-of-sample R^2 across a grid of lambda x alpha. Closes the
-        "why these parameters?" question. Re-runs the DMA loop for each cell.
+2.  Forecast Stacking (STACK)
+    Trains a Ridge meta-learner on the expanding history of DMA and
+    ElasticNet forecasts. The meta-learner learns the optimal time-varying
+    convex combination of the two base forecasters.
+    Classical reference: Bates & Granger (1969), cited in the paper.
+    Simple equal-weight average is also reported as a strong baseline.
 
-T9  Directional accuracy / hit-rate + Pesaran-Timmermann test
-        Percentage of months each model predicts the correct sign of the
-        copper return, with a formal PT test of directional predictability.
-        Delivers on the "valuable to traders/hedgers" promise in the intro.
-        Exact-zero forecasts are scored as MISSES (conservative convention).
+3.  Simple Combination (COMBO)
+    Equal-weight average of DMA and ElasticNet forecasts.
+    Theoretically: averaging reduces variance at the cost of a small bias
+    increase, which is typically beneficial when models have uncorrelated
+    errors. This is the Bates-Granger (1969) forecast combination result.
 
-T10 Predictor correlation matrix
-        Pairwise correlations among the 18 predictors. Supports the
-        Elastic-Net grouping discussion and motivates why model averaging
-        finds so many near-equivalent specifications. Saved as CSV; a heatmap
-        figure is produced in 05_evaluation-style if matplotlib is available.
-
-Usage
------
-    from src.extensions import run_all_extensions
-    run_all_extensions(
-        df=df, predictor_cols=PREDICTOR_COLS,
-        dma_result=dma_result, ml_results=ml_results,
-        hybrid_results=hybrid_results,
-        y=y, X=X, n_insample=120,
-        output_dir='output/',
-        run_sensitivity=True,        # set False to skip the T8 re-run
-    )
-
-References
-----------
-Diebold, F.X. & Mariano, R.S. (1995). Comparing Predictive Accuracy.
-    Journal of Business & Economic Statistics, 13(3), 253-263.
-Harvey, D., Leybourne, S. & Newbold, P. (1997). Testing the Equality of
-    Prediction Mean Squared Errors. International Journal of Forecasting,
-    13(2), 281-291.
-Pesaran, M.H. & Timmermann, A. (1992). A Simple Nonparametric Test of
-    Predictive Performance. Journal of Business & Economic Statistics,
-    10(4), 461-465.
+Key findings
+---------------------------------------------
+The equal-weight DMA+ElasticNet combination is the single best specification
+(R2_oos = 31.15%), but it improves on DMA alone (30.16%) by only about one
+percentage point. PIP-weighted ElasticNet (29.27%) edges standalone
+ElasticNet (29.01%), and the Ridge meta-learner stack (24.63%) underperforms
+both base models — the forecast combination puzzle (Smith & Wallis, 2009).
+The hybrids therefore confirm the thesis's convergence result rather than
+overturn it: DMA and the regularised linear models share most of their
+information set, leaving little complementary signal to exploit.
 """
 
-import os
+import time
 import warnings
-from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Optional
 
 import numpy as np
 import pandas as pd
-from scipy.stats import norm, t as student_t
+from sklearn.linear_model import (ElasticNet, ElasticNetCV,
+                                   RidgeCV)
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("ignore")
 
-
-# ===========================================================================
-# Shared helpers
-# ===========================================================================
-
-def _ensure_dir(path: str) -> str:
-    Path(path).mkdir(parents=True, exist_ok=True)
-    return path
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+TUNE_EVERY = 12   # retune ElasticNet hyperparameters every 12 OOS steps
+MIN_META   = 12   # minimum OOS history before meta-learner replaces simple average
 
 
-def _newey_west_var(d: np.ndarray, bw: int) -> float:
+# ---------------------------------------------------------------------------
+# Output dataclass
+# ---------------------------------------------------------------------------
+
+@dataclass
+class HybridResult:
     """
-    Newey-West (Bartlett-kernel) long-run variance of the mean of series d.
+    Container for one hybrid model's out-of-sample evaluation.
 
-    Returns the variance of the SAMPLE MEAN d-bar, i.e. includes the 1/T
-    factor. Used by both the DM/HLN statistic and as a generic HAC estimator.
+    Attributes
+    ----------
+    model_name  : str              hybrid model identifier
+    forecasts   : np.ndarray       out-of-sample point forecasts (T_oos,)
+    actual      : np.ndarray       realised copper returns (T_oos,)
+    dates       : pd.DatetimeIndex OOS dates
+    msfe        : float            mean squared forecast error
+    r2_oos      : float            Campbell-Thompson OOS R^2 vs random walk
+    cw_stat     : float            Clark-West statistic vs random walk
+    cw_pval     : float            one-sided p-value for CW test
+    runtime_s   : float            wall-clock time in seconds
+    description : str              brief description of the hybrid strategy
     """
-    T = len(d)
-    d_demeaned = d - d.mean()
-    gamma0 = np.dot(d_demeaned, d_demeaned) / T
-    lrv = gamma0
+    model_name  : str  = ''
+    forecasts   : np.ndarray = field(default_factory=lambda: np.array([]))
+    actual      : np.ndarray = field(default_factory=lambda: np.array([]))
+    dates       : Optional[pd.DatetimeIndex] = None
+    msfe        : float = 0.0
+    r2_oos      : float = 0.0
+    cw_stat     : float = 0.0
+    cw_pval     : float = 0.0
+    runtime_s   : float = 0.0
+    description : str  = ''
+
+
+# ---------------------------------------------------------------------------
+# Evaluation utilities (identical to 02 and 03 for consistent reporting)
+# ---------------------------------------------------------------------------
+
+def _msfe(errors: np.ndarray) -> float:
+    return float(np.mean(errors**2))
+
+
+def _r2_oos(errors_model: np.ndarray, errors_rw: np.ndarray) -> float:
+    """Campbell & Thompson (2008) OOS R^2."""
+    return float(1.0 - _msfe(errors_model) / _msfe(errors_rw))
+
+
+def _clark_west(errors_rw, errors_model,
+                forecasts_rw, forecasts_model) -> tuple[float, float]:
+    """Clark & West (2007) MSFE-adjusted t-statistic."""
+    cw_seq   = (errors_rw**2 - errors_model**2) + (forecasts_rw - forecasts_model)**2
+    cw_bar   = cw_seq.mean()
+    T        = len(cw_seq)
+    bw       = max(1, int(T**(1/3)))
+    demeaned = cw_seq - cw_bar
+    var_cw   = np.var(cw_seq, ddof=1)
     for lag in range(1, bw + 1):
-        w = 1.0 - lag / (bw + 1)
-        gamma = np.dot(d_demeaned[lag:], d_demeaned[:-lag]) / T
-        lrv += 2.0 * w * gamma
-    lrv = max(lrv, 1e-12)
-    return lrv / T  # variance of the mean
+        weight  = 1.0 - lag / (bw + 1)
+        var_cw += 2 * weight * np.mean(demeaned[lag:] * demeaned[:-lag])
+    var_cw = max(var_cw, 1e-12)
+    from scipy.stats import norm
+    cw_stat = float(cw_bar / np.sqrt(var_cw / T))
+    return cw_stat, float(1.0 - norm.cdf(cw_stat))
 
 
-# ===========================================================================
-# T7 — Pairwise Diebold-Mariano with HLN small-sample correction
-# ===========================================================================
+def _package(name, forecasts, y_oos, dates_oos, t0, description='') -> HybridResult:
+    """Compute evaluation metrics and pack into HybridResult."""
+    rw_fc   = np.zeros(len(y_oos))
+    err_rw  = y_oos - rw_fc
+    err_mod = y_oos - forecasts
+    stat, pval = _clark_west(err_rw, err_mod, rw_fc, forecasts)
+    return HybridResult(
+        model_name  = name,
+        forecasts   = forecasts,
+        actual      = y_oos,
+        dates       = dates_oos,
+        msfe        = _msfe(err_mod),
+        r2_oos      = _r2_oos(err_mod, err_rw),
+        cw_stat     = stat,
+        cw_pval     = pval,
+        runtime_s   = time.time() - t0,
+        description = description,
+    )
 
-def diebold_mariano_hln(errors_a: np.ndarray,
-                        errors_b: np.ndarray,
-                        h: int = 1,
-                        loss: str = 'squared') -> dict:
+
+# ---------------------------------------------------------------------------
+# Hybrid 1 — PIP-Weighted ElasticNet
+# ---------------------------------------------------------------------------
+
+def run_pip_weighted_elasticnet(
+        y: np.ndarray,
+        X: np.ndarray,
+        pip_path: np.ndarray,
+        n_insample: int,
+        dates: Optional[pd.DatetimeIndex] = None,
+        verbose: bool = True) -> HybridResult:
     """
-    Diebold-Mariano test with the Harvey-Leybourne-Newbold (1997)
-    small-sample correction.
+    PIP-Weighted ElasticNet (PIP-EN).
 
-    Tests H0: equal predictive accuracy (E[loss_a - loss_b] = 0).
-    A NEGATIVE statistic means model A has the smaller loss (A is better);
-    a POSITIVE statistic means B is better. The two-sided p-value tests
-    whether the accuracy difference is distinguishable from zero at all.
+    At each OOS step i (forecasting month t = n_insample + i):
+        1. Retrieve DMA's current posterior inclusion probabilities PIP_i.
+        2. Weight each predictor column j by PIP_i[j]:
+               X_weighted[row, j] = X[row, j] * PIP_i[j]
+        3. Fit ElasticNet on the weighted predictor matrix.
 
-    The HLN correction (a) rescales the statistic by a finite-sample factor
-    and (b) compares it to a Student-t distribution with (T-1) degrees of
-    freedom rather than the standard Normal. For h=1 the loss differential
-    has no MA structure, so the bandwidth used in the long-run variance is
-    h-1 = 0 (i.e. only the contemporaneous variance), which is the textbook
-    DM setting for one-step-ahead forecasts.
+    The PIP values are derived from the DMA prediction-step probabilities
+    (pi_{t|t-1}), which are computed in 02_dma_dms.py BEFORE observing y_t
+    and stored in `pip_path`. PIP_i therefore reflects only information
+    available at the time the forecast for month t = n_insample + i is made.
+    The hybrid weighting inherits this prospective alignment.
+
+    For in-sample training rows, we use pip_path[0] (the PIP vector at the
+    first OOS step, i.e. the end of the burn-in period) as a conservative
+    approximation. This avoids any forward-looking contamination of the
+    training data.
+
+    Why this works for linear models
+    ---------------------------------
+    Multiplying predictor j by PIP_j ∈ [0,1] before standardisation
+    effectively scales down the variance of X_j in proportion to how
+    confident DMA is that j belongs in the model. After standardisation,
+    features with low PIP have a compressed scale relative to high-PIP
+    features, which biases ElasticNet toward selecting high-PIP predictors.
+    This creates a soft variable selection mechanism guided by DMA's
+    time-varying Bayesian model probabilities.
 
     Parameters
     ----------
-    errors_a, errors_b : np.ndarray (T,)  forecast errors (actual - forecast)
-    h    : int    forecast horizon (loss-differential MA order is h-1)
-    loss : str    'squared' or 'absolute'
+    y          : np.ndarray (T,)       target variable
+    X          : np.ndarray (T, k)     predictor matrix
+    pip_path   : np.ndarray (T_oos, k) DMA posterior inclusion probs from 02
+    n_insample : int                   burn-in observations
+    dates      : pd.DatetimeIndex      aligned date index
+    verbose    : bool
 
     Returns
     -------
-    dict with keys: dm_stat, hln_stat, p_value (two-sided, from t_{T-1}),
-                    mean_diff, better, T
+    HybridResult
     """
-    ea = np.asarray(errors_a, dtype=float)
-    eb = np.asarray(errors_b, dtype=float)
-    if ea.shape != eb.shape:
-        raise ValueError("error series must have equal length")
-    T = len(ea)
+    T_oos  = len(y) - n_insample
+    k      = X.shape[1]
+    fc     = np.zeros(T_oos)
+    t0     = time.time()
+    pip_is = pip_path[0]       # PIP at start of OOS = end of IS burn-in
+    alpha_en, l1_en = 0.01, 0.5
 
-    if loss == 'squared':
-        la, lb = ea**2, eb**2
-    elif loss == 'absolute':
-        la, lb = np.abs(ea), np.abs(eb)
-    else:
-        raise ValueError("loss must be 'squared' or 'absolute'")
+    for i in range(T_oos):
+        t     = n_insample + i
+        pip_t = pip_path[i]    # current PIP vector — NO lookahead
 
-    d = la - lb            # loss differential; negative => A better
-    d_bar = d.mean()
+        # Build PIP weight matrix for all training rows
+        # IS rows: use pip_is; previous OOS rows: use their actual pip
+        if i > 0:
+            pip_weights = np.vstack([
+                np.tile(pip_is, (n_insample, 1)),  # (n_insample, k)
+                pip_path[:i]                        # (i, k)
+            ])  # shape (t, k)
+        else:
+            pip_weights = np.tile(pip_is, (n_insample, 1))  # (n_insample, k)
 
-    # Long-run variance of d-bar using bandwidth = h-1 (DM convention)
-    bw = max(0, h - 1)
-    if bw == 0:
-        var_dbar = np.var(d, ddof=0) / T
-        var_dbar = max(var_dbar, 1e-12)
-    else:
-        var_dbar = _newey_west_var(d, bw)
+        X_train_w = X[:t] * pip_weights     # element-wise scaling
+        X_test_w  = X[t:t+1] * pip_t
 
-    dm_stat = d_bar / np.sqrt(var_dbar)
+        sc  = StandardScaler()
+        Xtr = sc.fit_transform(X_train_w)
+        Xte = sc.transform(X_test_w)
 
-    # HLN finite-sample correction factor
-    hln_factor = np.sqrt((T + 1 - 2 * h + h * (h - 1) / T) / T)
-    hln_stat = dm_stat * hln_factor
+        # Retune ElasticNet hyperparameters every TUNE_EVERY steps
+        if i % TUNE_EVERY == 0:
+            tscv  = TimeSeriesSplit(n_splits=3)
+            m_cv  = ElasticNetCV(cv=tscv, max_iter=5000, random_state=42,
+                                  l1_ratio=[0.1, 0.3, 0.5, 0.7, 0.9]).fit(Xtr, y[:t])
+            alpha_en = float(m_cv.alpha_)
+            l1_en    = float(m_cv.l1_ratio_)
 
-    # Two-sided p-value from Student-t with T-1 dof
-    p_value = 2.0 * (1.0 - student_t.cdf(abs(hln_stat), df=T - 1))
+        m     = ElasticNet(alpha=alpha_en, l1_ratio=l1_en, max_iter=5000).fit(Xtr, y[:t])
+        fc[i] = float(m.predict(Xte)[0])
 
-    better = 'A' if d_bar < 0 else ('B' if d_bar > 0 else 'tie')
+    if verbose:
+        y_oos = y[n_insample:]
+        r2    = _r2_oos(y_oos - fc, y_oos)
+        print(f"  PIP-EN:       R2={r2:.4f}  t={time.time()-t0:.1f}s")
 
-    return {
-        'dm_stat':   float(dm_stat),
-        'hln_stat':  float(hln_stat),
-        'p_value':   float(p_value),
-        'mean_diff': float(d_bar),
-        'better':    better,
-        'T':         int(T),
-    }
+    return _package(
+        'PIP_ElasticNet', fc, y[n_insample:],
+        dates[n_insample:] if dates is not None else None,
+        t0,
+        description="DMA PIPs as soft variable weights → ElasticNet"
+    )
 
 
-def make_table7_dm(forecasts: dict,
-                   actual: np.ndarray,
-                   output_dir: str,
-                   h: int = 1) -> pd.DataFrame:
+# ---------------------------------------------------------------------------
+# Hybrid 2 — Forecast Stacking
+# ---------------------------------------------------------------------------
+
+def run_forecast_stacking(
+        y: np.ndarray,
+        dma_forecasts: np.ndarray,
+        ml_forecasts: np.ndarray,
+        y_oos: np.ndarray,
+        dates_oos: Optional[pd.DatetimeIndex] = None,
+        verbose: bool = True) -> HybridResult:
     """
-    T7: Pairwise HLN-corrected Diebold-Mariano matrix among the top models.
+    Forecast Stacking (Ridge meta-learner).
 
-    Produces a long-form table (one row per unordered pair) AND a square
-    matrix of HLN statistics / p-values, both saved to CSV.
+    Trains a Ridge regression meta-learner on the expanding history of
+    DMA and ElasticNet (or any ML model) out-of-sample forecasts. At each
+    step i, the meta-learner has access only to forecasts from steps 0..i-1,
+    ensuring strict temporal validity.
+
+    For the first MIN_META=12 OOS steps (insufficient history to train
+    the meta-learner), a simple equal-weight average is used instead.
+
+    The meta-learner weight on DMA vs ML is unconstrained — it can learn to
+    increase or decrease DMA's contribution over time. However, because Ridge
+    regression shrinks weights toward zero, the effective combination tends
+    toward the simple average when the two base forecasters perform similarly.
 
     Parameters
     ----------
-    forecasts : dict   {model_name: forecast_vector}; order is preserved
-    actual    : np.ndarray (T,)  realised returns
-    h         : int    forecast horizon
+    y             : np.ndarray (T,)      full target series
+    dma_forecasts : np.ndarray (T_oos,)  DMA one-step-ahead forecasts
+    ml_forecasts  : np.ndarray (T_oos,)  ML model forecasts (e.g. ElasticNet)
+    y_oos         : np.ndarray (T_oos,)  realised OOS returns
+    dates_oos     : pd.DatetimeIndex     OOS dates
+    verbose       : bool
 
     Returns
     -------
-    pd.DataFrame  long-form pairwise results
+    HybridResult
     """
-    names = list(forecasts.keys())
-    errors = {nm: actual - fc for nm, fc in forecasts.items()}
+    T_oos = len(y_oos)
+    fc    = np.zeros(T_oos)
+    t0    = time.time()
+    base  = np.column_stack([dma_forecasts, ml_forecasts])  # (T_oos, 2)
 
-    long_rows = []
-    n = len(names)
-    stat_mat = pd.DataFrame(np.nan, index=names, columns=names)
-    pval_mat = pd.DataFrame(np.nan, index=names, columns=names)
+    for i in range(T_oos):
+        if i < MIN_META:
+            # Simple average before sufficient meta-training history
+            fc[i] = 0.5 * dma_forecasts[i] + 0.5 * ml_forecasts[i]
+        else:
+            mXtr = base[:i]           # (i, 2) — past forecasts
+            mYtr = y_oos[:i]          # (i,)   — past realisations
+            mXte = base[i:i+1]        # (1, 2) — current forecasts
 
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                stat_mat.iloc[i, j] = 0.0
-                pval_mat.iloc[i, j] = 1.0
-                continue
-            res = diebold_mariano_hln(errors[names[i]], errors[names[j]],
-                                      h=h, loss='squared')
-            # statistic sign convention: negative => row model (A) better
-            stat_mat.iloc[i, j] = round(res['hln_stat'], 4)
-            pval_mat.iloc[i, j] = round(res['p_value'], 4)
-            if i < j:  # record each unordered pair once in long form
-                winner = names[i] if res['better'] == 'A' else (
-                         names[j] if res['better'] == 'B' else 'tie')
-                long_rows.append({
-                    'Model A':      names[i],
-                    'Model B':      names[j],
-                    'Mean loss diff (A-B)': round(res['mean_diff'], 5),
-                    'HLN stat':     round(res['hln_stat'], 4),
-                    'p-value':      round(res['p_value'], 4),
-                    'Lower MSFE':   winner,
-                    'Significant 5%': 'yes' if res['p_value'] < 0.05 else 'no',
-                })
+            sc   = StandardScaler()
+            mXtr = sc.fit_transform(mXtr)
+            mXte = sc.transform(mXte)
 
-    long_df = pd.DataFrame(long_rows)
-    long_df.to_csv(os.path.join(output_dir, 'T7_dm_pairwise.csv'), index=False)
-    stat_mat.to_csv(os.path.join(output_dir, 'T7_dm_stat_matrix.csv'))
-    pval_mat.to_csv(os.path.join(output_dir, 'T7_dm_pval_matrix.csv'))
-    print("  T7 saved (pairwise DM-HLN: long form + stat/pval matrices)")
-    return long_df
+            m_meta = RidgeCV(alphas=np.logspace(-3, 3, 20)).fit(mXtr, mYtr)
+            fc[i]  = float(m_meta.predict(mXte)[0])
+
+    if verbose:
+        r2 = _r2_oos(y_oos - fc, y_oos)
+        print(f"  Stacking:     R2={r2:.4f}  t={time.time()-t0:.1f}s")
+
+    return _package(
+        'Stacking_DMA_EN', fc, y_oos, dates_oos, t0,
+        description="Ridge meta-learner on DMA + ElasticNet forecasts"
+    )
 
 
-# ===========================================================================
-# T8 — Forgetting-factor sensitivity
-# ===========================================================================
+# ---------------------------------------------------------------------------
+# Hybrid 3 — Equal-Weight Combination
+# ---------------------------------------------------------------------------
 
-def make_table8_sensitivity(y: np.ndarray,
-                            X: np.ndarray,
-                            n_insample: int,
-                            output_dir: str,
-                            lambdas: list = (0.97, 0.98, 0.99),
-                            alphas: list = (0.90, 0.95, 0.99),
-                            kappa: float = 0.97,
-                            dates=None,
-                            baseline=(0.99, 0.95)) -> pd.DataFrame:
+def run_equal_weight_combination(
+        dma_forecasts: np.ndarray,
+        ml_forecasts: np.ndarray,
+        y_oos: np.ndarray,
+        dates_oos: Optional[pd.DatetimeIndex] = None,
+        name: str = 'Combo_DMA_EN',
+        verbose: bool = True) -> HybridResult:
     """
-    T8: DMA out-of-sample R^2 across a grid of lambda (state forgetting) and
-    alpha (model forgetting). Closes the "why these parameters?" question.
+    Equal-Weight Forecast Combination.
 
-    Re-runs the DMA engine once per (lambda, alpha) cell. With 3x3 = 9 cells
-    at ~80s each, expect ~12 minutes. The baseline cell (0.99, 0.95) should
-    reproduce the headline R^2 from Table 2 exactly, serving as a self-check.
+    Simple arithmetic average of DMA and ML forecasts:
+        y_hat_combo = 0.5 * y_hat_DMA + 0.5 * y_hat_ML
 
-    Returns
-    -------
-    pd.DataFrame  rows = lambda, cols = alpha, values = OOS R^2 (%)
-    """
-    # Local import to avoid a hard dependency when sensitivity is skipped
-    from src.dma_dms import run_dma_dms
+    Despite its simplicity, equal-weight averaging is theoretically motivated
+    by the Bates-Granger (1969) result that combining forecasts reduces
+    variance when constituent forecasts have uncorrelated errors. In practice,
+    it is surprisingly difficult to beat even with sophisticated meta-learners
+    — a finding replicated here (Stacking: R²_oos = 24.63% vs Combo: 31.15%).
 
-    grid = pd.DataFrame(index=[f'lambda={l}' for l in lambdas],
-                        columns=[f'alpha={a}' for a in alphas], dtype=float)
-
-    print(f"  T8: running {len(lambdas)}x{len(alphas)} DMA sensitivity grid...")
-    for l in lambdas:
-        for a in alphas:
-            res = run_dma_dms(y=y, X=X, n_insample=n_insample,
-                              lam=l, alpha=a, kappa=kappa,
-                              dates=dates, verbose=False)
-            r2 = res.r2_oos['DMA'] * 100.0
-            grid.loc[f'lambda={l}', f'alpha={a}'] = round(r2, 2)
-            tag = '  <- baseline' if (l, a) == tuple(baseline) else ''
-            print(f"    lambda={l}, alpha={a}:  R2={r2:6.2f}%{tag}")
-
-    grid.to_csv(os.path.join(output_dir, 'T8_ff_sensitivity.csv'))
-    print("  T8 saved (forgetting-factor sensitivity grid)")
-    return grid
-
-
-# ===========================================================================
-# T9 — Directional accuracy + Pesaran-Timmermann
-# ===========================================================================
-
-def pesaran_timmermann(actual: np.ndarray,
-                       forecast: np.ndarray) -> dict:
-    """
-    Pesaran-Timmermann (1992) nonparametric test of directional / sign
-    predictability.
-
-    Tests H0: forecast direction is independent of actual direction.
-    The statistic is asymptotically N(0,1) under H0; large positive values
-    indicate genuine directional predictability.
-
-    Sign convention for scoring: a correct "hit" requires sign(forecast) ==
-    sign(actual). Exact-zero forecasts are scored as MISSES (they take
-    sign 0, which equals sign(actual) only when the actual is also exactly
-    zero — effectively never for continuous returns). This is the
-    conservative convention requested for the thesis.
-
-    Returns
-    -------
-    dict: hit_rate, pt_stat, p_value (one-sided), n
-    """
-    a = np.asarray(actual, dtype=float)
-    f = np.asarray(forecast, dtype=float)
-    n = len(a)
-
-    sa = np.sign(a)
-    sf = np.sign(f)
-    # Hit: same sign AND forecast sign is non-zero (zero forecast = miss)
-    hits = ((sa == sf) & (sf != 0)).astype(float)
-    hit_rate = hits.mean()
-
-    # PT test uses indicator of POSITIVE direction
-    # Define indicator z_t = 1 if actual>0, x_t = 1 if forecast>0
-    py = np.mean(a > 0)                 # P(actual up)
-    px = np.mean(f > 0)                 # P(forecast up)
-    # P* = probability of a correct sign call under independence
-    p_star = py * px + (1 - py) * (1 - px)
-    # P_hat = realised proportion of correct UP/DOWN sign calls,
-    # consistent with the PT formulation (zero forecast counts as "down")
-    correct = ((a > 0) == (f > 0)).astype(float)
-    p_hat = correct.mean()
-
-    var_phat = p_star * (1 - p_star) / n
-    var_pstar = (((2 * py - 1) ** 2) * px * (1 - px)
-                 + ((2 * px - 1) ** 2) * py * (1 - py)
-                 + 4 * py * px * (1 - py) * (1 - px) / n) / n
-    var_diff = var_phat - var_pstar
-    var_diff = max(var_diff, 1e-12)
-
-    pt_stat = (p_hat - p_star) / np.sqrt(var_diff)
-    p_value = 1.0 - norm.cdf(pt_stat)   # one-sided
-
-    return {
-        'hit_rate': float(hit_rate),
-        'pt_stat':  float(pt_stat),
-        'p_value':  float(p_value),
-        'n':        int(n),
-    }
-
-
-def make_table9_directional(forecasts: dict,
-                            actual: np.ndarray,
-                            output_dir: str) -> pd.DataFrame:
-    """
-    T9: Directional hit-rate and Pesaran-Timmermann test for every model.
+    This variant is included for two reasons:
+    1. It is computationally trivial and fully interpretable.
+    2. It matches the 'forecast combination' literature benchmark that
+       Issler et al. (2014) find to be the best simple approach at monthly
+       frequency (also cited in Buncic & Moretto, 2014, Section 2.4).
 
     Parameters
     ----------
-    forecasts : dict  {model_name: forecast_vector}
-    actual    : np.ndarray (T,)
-
-    Returns
-    -------
-    pd.DataFrame  one row per model, sorted by hit-rate
+    dma_forecasts : np.ndarray (T_oos,)
+    ml_forecasts  : np.ndarray (T_oos,)
+    y_oos         : np.ndarray (T_oos,)
+    dates_oos     : pd.DatetimeIndex
+    name          : str   model name for display
+    verbose       : bool
     """
-    rows = []
-    for name, fc in forecasts.items():
-        pt = pesaran_timmermann(actual, fc)
-        rows.append({
-            'Model':       name,
-            'Hit rate (%)': round(pt['hit_rate'] * 100, 2),
-            'PT stat':     round(pt['pt_stat'], 4),
-            'p-value':     round(pt['p_value'], 4),
-            'N':           pt['n'],
-        })
-    t9 = (pd.DataFrame(rows)
-            .sort_values('Hit rate (%)', ascending=False)
-            .set_index('Model'))
-    t9.to_csv(os.path.join(output_dir, 'T9_directional.csv'))
-    print("  T9 saved (directional accuracy + Pesaran-Timmermann)")
-    return t9
+    t0 = time.time()
+    fc = 0.5 * dma_forecasts + 0.5 * ml_forecasts
+
+    if verbose:
+        r2 = _r2_oos(y_oos - fc, y_oos)
+        print(f"  Combo DMA+EN: R2={r2:.4f}  t={time.time()-t0:.3f}s")
+
+    return _package(
+        name, fc, y_oos, dates_oos, t0,
+        description="Equal-weight average: 0.5*DMA + 0.5*ElasticNet"
+    )
 
 
-# ===========================================================================
-# T10 — Predictor correlation matrix
-# ===========================================================================
-
-def make_table10_correlation(df: pd.DataFrame,
-                            predictor_cols: list,
-                            output_dir: str,
-                            make_heatmap: bool = True) -> pd.DataFrame:
-    """
-    T10: Pearson correlation matrix of the 18 predictors over the full sample.
-
-    Supports the Elastic-Net grouping discussion and motivates the large
-    population of near-equivalent DMA specifications. A heatmap figure is
-    written in the 05_evaluation visual style when matplotlib is available.
-
-    Returns
-    -------
-    pd.DataFrame  18x18 correlation matrix (short labels)
-    """
-    short = [c.replace('x_', '') for c in predictor_cols]
-    corr = df[predictor_cols].corr()
-    corr.index = short
-    corr.columns = short
-    corr.round(3).to_csv(os.path.join(output_dir, 'T10_predictor_corr.csv'))
-    print("  T10 saved (predictor correlation matrix)")
-
-    if make_heatmap:
-        try:
-            import matplotlib
-            matplotlib.use('Agg')
-            import matplotlib.pyplot as plt
-
-            with plt.rc_context({'font.size': 8, 'figure.dpi': 150}):
-                fig, ax = plt.subplots(figsize=(9, 8))
-                im = ax.imshow(corr.values, cmap='RdBu_r', vmin=-1, vmax=1,
-                               aspect='equal')
-                ax.set_xticks(range(len(short)))
-                ax.set_yticks(range(len(short)))
-                ax.set_xticklabels(short, rotation=90, fontsize=7)
-                ax.set_yticklabels(short, fontsize=7)
-                # annotate cells with correlation values
-                for i in range(len(short)):
-                    for j in range(len(short)):
-                        v = corr.values[i, j]
-                        ax.text(j, i, f'{v:.2f}', ha='center', va='center',
-                                fontsize=5,
-                                color='white' if abs(v) > 0.55 else 'black')
-                cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-                cbar.set_label('Pearson correlation', fontsize=8)
-                ax.set_title('Predictor Correlation Matrix '
-                             '(March 1998 – February 2026)', fontsize=10)
-                plt.tight_layout()
-                path = os.path.join(output_dir, 'F11_predictor_corr_heatmap.pdf')
-                fig.savefig(path, bbox_inches='tight')
-                plt.close(fig)
-                print(f"    Saved: {path}")
-        except Exception as e:
-            print(f"    Heatmap skipped ({e})")
-
-    return corr.round(3)
-
-
-# ===========================================================================
+# ---------------------------------------------------------------------------
 # Master runner
-# ===========================================================================
-
-
-# ---------------------------------------------------------------------------
-# T13 — DMA vs DMS: model-probability diagnostics and sub-period comparison
 # ---------------------------------------------------------------------------
 
-SUBPERIODS_T13 = [
-    ('GFC',          '2008-09-01', '2009-06-30'),
-    ('Recovery',     '2009-07-01', '2019-12-31'),
-    ('COVID-19',     '2020-01-01', '2020-12-31'),
-    ('Supercycle',   '2021-01-01', '2021-12-31'),
-    ('Ukraine shock','2022-01-01', '2022-12-31'),
-    ('Post-shock',   '2023-01-01', '2026-02-28'),
-    ('Full OOS',     '2008-03-01', '2026-02-28'),
-]
-
-
-def make_table13_dma_dms(dma_result, output_dir: str) -> pd.DataFrame:
+def run_all_hybrids(
+        y: np.ndarray,
+        X: np.ndarray,
+        dma_result,
+        ml_results: dict,
+        n_insample: int,
+        dates: Optional[pd.DatetimeIndex] = None,
+        verbose: bool = True) -> dict:
     """
-    T13: Why DMA beats DMS — diagnostics on the prior model-probability
-    vector at each forecast origin (recorded in DMAResult.diagnostics) and
-    a sub-period comparison of the two estimators.
-
-    Columns
-    -------
-    pi_max (%)   mean prior probability of the DMS-selected (top) model
-    N_eff        mean effective number of models, 1 / sum_m pi_m^2
-    Switch (%)   share of month-to-month transitions inside the period in
-                 which the DMS-selected model changes
-    DMA / DMS R2 out-of-sample R^2 vs random walk, in percent
-
-    Also saves the full monthly diagnostic path and prints the DMA-vs-DMS
-    HLN-corrected Diebold-Mariano test over the full window.
-    """
-    _ensure_dir(output_dir)
-    d     = dma_result.diagnostics
-    dates = pd.DatetimeIndex(dma_result.dates)
-    y     = np.asarray(dma_result.actual)
-    dma   = np.asarray(dma_result.dma_forecasts)
-    dms   = np.asarray(dma_result.dms_forecasts)
-    M     = float(dma_result.params['M'])
-
-    def _r2(fc, yy):
-        return 100.0 * (1.0 - np.sum((yy - fc)**2) / np.sum(yy**2))
-
-    switch = (np.diff(d['top_model']) != 0)
-    rows = []
-    for label, a, b in SUBPERIODS_T13:
-        m  = (dates >= a) & (dates <= b)
-        mm = m[:-1] & m[1:]                      # transitions inside period
-        rows.append({
-            'Period':       label,
-            'N':            int(m.sum()),
-            'pi_max (%)':   round(100.0 * d['pi_max'][m].mean(), 4),
-            'N_eff':        int(round(d['n_eff'][m].mean())),
-            'Switch (%)':   round(100.0 * switch[mm].mean(), 1) if mm.any() else np.nan,
-            'DMA R2 (%)':   round(_r2(dma[m], y[m]), 2),
-            'DMS R2 (%)':   round(_r2(dms[m], y[m]), 2),
-        })
-    tab = pd.DataFrame(rows)
-
-    # Headline diagnostics and DMA-vs-DMS DM test (full window)
-    dm = diebold_mariano_hln(y - dma, y - dms, h=1)
-    headline = {
-        'pi_max_mean (%)':        100.0 * d['pi_max'].mean(),
-        'pi_max_max (%)':         100.0 * d['pi_max'].max(),
-        'pi_max_mean / uniform':  d['pi_max'].mean() * M,
-        'N_eff_mean':             d['n_eff'].mean(),
-        'N_eff_min':              d['n_eff'].min(),
-        'N_eff_mean_share (%)':   100.0 * d['n_eff'].mean() / M,
-        'mass_top10_max (%)':     100.0 * d['mass_top10'].max(),
-        'switch_rate (%)':        100.0 * switch.mean(),
-        'top_size_mean':          d['top_size'].mean(),
-        'sd_fc_DMA':              dma.std(),
-        'sd_fc_DMS':              dms.std(),
-        'DMS_abs_err_larger (%)': 100.0 * np.mean(np.abs(y - dms) > np.abs(y - dma)),
-        'DM_HLN_stat':            dm['hln_stat'],
-        'DM_p_value':             dm['p_value'],
-    }
-
-    tab.to_csv(os.path.join(output_dir, 'T13_dma_dms_subperiod.csv'), index=False)
-    pd.Series(headline).to_csv(os.path.join(output_dir, 'T13_dma_dms_headline.csv'),
-                               header=['value'])
-    pd.DataFrame({'date': dates, **{k: v for k, v in d.items()},
-                  'dma_fc': dma, 'dms_fc': dms, 'actual': y}).to_csv(
-        os.path.join(output_dir, 'T13_dma_dms_diagnostics.csv'), index=False)
-
-    print("  T13 saved (sub-period table, headline diagnostics, monthly path)")
-    print(f"  DMA vs DMS: HLN stat = {dm['hln_stat']:.3f}, p = {dm['p_value']:.3f}")
-    return tab
-
-
-def _collect_top_forecasts(dma_result, ml_results, hybrid_results) -> dict:
-    """
-    Assemble the forecast dict for the 'top models' comparison used by T7.
-    Order matters for matrix readability: DMA, Ridge, ElasticNet, Combo.
-    Falls back gracefully if a model is missing.
-    """
-    fc = {}
-    fc['DMA'] = dma_result.dma_forecasts
-    if 'Ridge' in ml_results:
-        fc['Ridge'] = ml_results['Ridge'].forecasts
-    if 'ElasticNet' in ml_results:
-        fc['ElasticNet'] = ml_results['ElasticNet'].forecasts
-    if 'Combo_DMA_EN' in hybrid_results:
-        fc['Combo'] = hybrid_results['Combo_DMA_EN'].forecasts
-    return fc
-
-
-def _collect_all_forecasts(dma_result, ml_results, hybrid_results) -> dict:
-    """Assemble the full forecast dict used by T9 (directional accuracy)."""
-    fc = {'DMA': dma_result.dma_forecasts,
-          'DMS': dma_result.dms_forecasts,
-          'TVP': dma_result.tvp_forecasts}
-    for name in ['OLS', 'Ridge', 'LASSO', 'ElasticNet', 'BayesianRidge',
-                 'RandomForest', 'XGBoost', 'MLP']:
-        if name in ml_results and not np.isnan(ml_results[name].msfe):
-            fc[name] = ml_results[name].forecasts
-    for hname, label in [('PIP_ElasticNet', 'PIP-EN'),
-                         ('Stacking', 'Stacking'),
-                         ('Combo_DMA_EN', 'Combo')]:
-        if hname in hybrid_results:
-            fc[label] = hybrid_results[hname].forecasts
-    return fc
-
-
-def run_all_extensions(df: pd.DataFrame,
-                       predictor_cols: list,
-                       dma_result,
-                       ml_results: dict,
-                       hybrid_results: dict,
-                       y: np.ndarray,
-                       X: np.ndarray,
-                       n_insample: int,
-                       output_dir: str = 'output/',
-                       run_sensitivity: bool = True,
-                       dates=None) -> dict:
-    """
-    Run all Tier-1 extensions (T7–T10) and save outputs.
+    Run all three hybrid variants and return results as a dict.
 
     Parameters
     ----------
-    df              : clean monthly panel
-    predictor_cols  : 18 predictor column names
-    dma_result      : DMAResult from run_dma_dms()
-    ml_results      : dict from run_all_ml_models()
-    hybrid_results  : dict from run_all_hybrids()
-    y, X            : target and predictor arrays (needed for T8 re-run)
-    n_insample      : burn-in length
-    run_sensitivity : if False, skip the T8 forgetting-factor grid (the only
-                      compute-heavy item)
-    dates           : optional DatetimeIndex aligned with y
+    y           : np.ndarray (T,)    full target variable
+    X           : np.ndarray (T, k)  full predictor matrix
+    dma_result  : DMAResult          output of run_dma_dms() from 02_dma_dms
+    ml_results  : dict               output of run_all_ml_models() from 03_ml_models
+    n_insample  : int                burn-in observations
+    dates       : pd.DatetimeIndex   aligned date index
+    verbose     : bool
 
     Returns
     -------
-    dict mapping table name -> DataFrame
+    dict mapping hybrid name (str) -> HybridResult
     """
-    _ensure_dir(output_dir)
-    if dates is None:
-        dates = pd.DatetimeIndex(df['date'])
+    y_oos     = y[n_insample:]
+    dates_oos = dates[n_insample:] if dates is not None else None
+    pip_path  = dma_result.pip_path
+    dma_fc    = dma_result.dma_forecasts
 
-    actual = dma_result.actual
+    # Use ElasticNet as the primary ML partner (best ML performer)
+    if 'ElasticNet' not in ml_results:
+        raise ValueError("ElasticNet results missing from ml_results — "
+                         "run run_all_ml_models() before run_all_hybrids().")
+    en_fc = ml_results['ElasticNet'].forecasts
 
-    print("\n" + "=" * 55)
-    print("06_extensions.py  —  Tier 1 extensions")
-    print("=" * 55)
+    if verbose:
+        T_oos = len(y_oos)
+        print(f"\nHybrid models: T_oos={T_oos}")
+        if dates_oos is not None:
+            print(f"OOS: {dates_oos[0].strftime('%b %Y')} "
+                  f"to {dates_oos[-1].strftime('%b %Y')}")
+        print()
 
-    out = {}
+    results = {}
 
-    # ── T7: pairwise DM-HLN among top models ─────────────────────────────
-    print("\nT7: Pairwise Diebold-Mariano (HLN-corrected)")
-    top_fc = _collect_top_forecasts(dma_result, ml_results, hybrid_results)
-    out['T7'] = make_table7_dm(top_fc, actual, output_dir, h=1)
-    print(out['T7'].to_string(index=False))
+    # Hybrid 1: PIP-weighted ElasticNet
+    results['PIP_ElasticNet'] = run_pip_weighted_elasticnet(
+        y=y, X=X, pip_path=pip_path,
+        n_insample=n_insample, dates=dates, verbose=verbose)
 
-    # ── T9: directional accuracy + PT (cheap; do before optional T8) ─────
-    print("\nT9: Directional accuracy + Pesaran-Timmermann")
-    all_fc = _collect_all_forecasts(dma_result, ml_results, hybrid_results)
-    out['T9'] = make_table9_directional(all_fc, actual, output_dir)
-    print(out['T9'].to_string())
+    # Hybrid 2: Forecast stacking (Ridge meta-learner)
+    results['Stacking'] = run_forecast_stacking(
+        y=y, dma_forecasts=dma_fc, ml_forecasts=en_fc,
+        y_oos=y_oos, dates_oos=dates_oos, verbose=verbose)
 
-    # ── T13: DMA vs DMS diagnostics (cheap; uses recorded probabilities) ─
-    print("\nT13: DMA vs DMS — model-probability diagnostics")
-    out['T13'] = make_table13_dma_dms(dma_result, output_dir)
-    print(out['T13'].to_string(index=False))
+    # Hybrid 3: Equal-weight combination
+    results['Combo_DMA_EN'] = run_equal_weight_combination(
+        dma_forecasts=dma_fc, ml_forecasts=en_fc,
+        y_oos=y_oos, dates_oos=dates_oos, verbose=verbose)
 
-    # ── T10: predictor correlation matrix ────────────────────────────────
-    print("\nT10: Predictor correlation matrix")
-    out['T10'] = make_table10_correlation(df, predictor_cols, output_dir)
-
-    # ── T8: forgetting-factor sensitivity (optional, compute-heavy) ──────
-    if run_sensitivity:
-        print("\nT8: Forgetting-factor sensitivity (re-runs DMA grid)")
-        out['T8'] = make_table8_sensitivity(
-            y=y, X=X, n_insample=n_insample, output_dir=output_dir,
-            dates=dates)
-        print(out['T8'].to_string())
-    else:
-        print("\nT8: Forgetting-factor sensitivity [SKIPPED — run_sensitivity=False]")
-
-    print("\nAll Tier-1 extensions complete. Outputs in:", output_dir)
-    return out
+    return results
 
 
 # ---------------------------------------------------------------------------
-# Quick validation — run as script against the real pipeline
+# Results display
+# ---------------------------------------------------------------------------
+
+def print_hybrid_table(hybrid_results: dict,
+                       dma_result=None,
+                       ml_results: dict = None,
+                       rw_msfe: Optional[float] = None) -> pd.DataFrame:
+    """
+    Print consolidated evaluation table: RW + DMA + best ML + all hybrids.
+
+    Parameters
+    ----------
+    hybrid_results : dict        output of run_all_hybrids
+    dma_result     : DMAResult   from 02_dma_dms (optional, for DMA rows)
+    ml_results     : dict        from 03_ml_models (optional, for ML rows)
+    rw_msfe        : float       RW MSFE for relative MSFE column
+
+    Returns
+    -------
+    pd.DataFrame  formatted results table
+    """
+    # Infer RW MSFE
+    if rw_msfe is None and dma_result is not None:
+        rw_msfe = dma_result.msfe.get('RW', None)
+    if rw_msfe is None and hybrid_results:
+        first = next(iter(hybrid_results.values()))
+        rw_fc   = np.zeros(len(first.actual))
+        rw_msfe = float(np.mean((first.actual - rw_fc)**2))
+
+    rows = []
+
+    # Random walk
+    rows.append({'Model': 'Random Walk (RW)',
+                 'MSFE': round(rw_msfe, 4), 'Rel. MSFE': 1.0,
+                 'R2_oos (%)': '—', 'CW-stat': '—', 'p-value': '—'})
+
+    # DMA baseline
+    if dma_result is not None:
+        for mname in ['DMA']:
+            rows.append({
+                'Model':      mname,
+                'MSFE':       round(dma_result.msfe[mname], 4),
+                'Rel. MSFE':  round(dma_result.msfe[mname] / rw_msfe, 4),
+                'R2_oos (%)': round(dma_result.r2_oos[mname] * 100, 4),
+                'CW-stat':    round(dma_result.cw_stat[mname], 4),
+                'p-value':    round(dma_result.cw_pval[mname], 4),
+            })
+
+    # Best ML baseline (ElasticNet)
+    if ml_results is not None and 'ElasticNet' in ml_results:
+        res = ml_results['ElasticNet']
+        rows.append({
+            'Model':      'ElasticNet (best ML)',
+            'MSFE':       round(res.msfe, 4),
+            'Rel. MSFE':  round(res.msfe / rw_msfe, 4),
+            'R2_oos (%)': round(res.r2_oos * 100, 4),
+            'CW-stat':    round(res.cw_stat, 4),
+            'p-value':    round(res.cw_pval, 4),
+        })
+
+    # Hybrid models
+    for name, res in hybrid_results.items():
+        rows.append({
+            'Model':      name,
+            'MSFE':       round(res.msfe, 4),
+            'Rel. MSFE':  round(res.msfe / rw_msfe, 4),
+            'R2_oos (%)': round(res.r2_oos * 100, 4),
+            'CW-stat':    round(res.cw_stat, 4),
+            'p-value':    round(res.cw_pval, 4),
+        })
+
+    df = pd.DataFrame(rows).set_index('Model')
+    print("\nHybrid Model Evaluation Table")
+    print(df.to_string())
+    return df
+
+
+def print_hybrid_descriptions(hybrid_results: dict) -> None:
+    """Print a brief description of each hybrid strategy."""
+    print("\nHybrid Strategy Descriptions")
+    print("-" * 60)
+    for name, res in hybrid_results.items():
+        print(f"  {name}:")
+        print(f"    {res.description}")
+        print(f"    R2_oos = {res.r2_oos*100:.2f}%  |  "
+              f"CW-stat = {res.cw_stat:.4f}  |  p = {res.cw_pval:.4f}")
+        print()
+
+
+# ---------------------------------------------------------------------------
+# Quick validation — run as script
 # ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from src.pipeline   import build_dataset, PREDICTOR_COLS
-    from src.dma_dms    import run_dma_dms
-    from src.ml_models  import run_all_ml_models
-    from src.hybrid     import run_all_hybrids
+    from src.pipeline import build_dataset, PREDICTOR_COLS
+    from src.dma_dms import run_dma_dms
+    from src.ml_models import run_all_ml_models
 
-    data_dir   = sys.argv[1] if len(sys.argv) > 1 else '/mnt/user-data/uploads/'
-    output_dir = sys.argv[2] if len(sys.argv) > 2 else 'output/'
+    data_dir = sys.argv[1] if len(sys.argv) > 1 else '/mnt/user-data/uploads/'
+
+    print("=" * 60)
+    print("04_hybrid.py  —  Hybrid DMA-ML models")
+    print("=" * 60)
 
     df, meta = build_dataset(data_dir=data_dir)
     y     = df['r_copper'].values
     X     = df[PREDICTOR_COLS].values
     dates = pd.DatetimeIndex(df['date'])
-    n_is  = 120
+    n_insample = 120
 
-    dma_result     = run_dma_dms(y=y, X=X, n_insample=n_is, dates=dates, verbose=True)
-    ml_results     = run_all_ml_models(y=y, X=X, n_insample=n_is, dates=dates,
-                                       verbose=True)
-    hybrid_results = run_all_hybrids(y=y, X=X, dma_result=dma_result,
-                                     ml_results=ml_results, n_insample=n_is,
-                                     dates=dates, verbose=True)
+    # Step 1: Run DMA to get PIP path and base forecasts
+    print("\nStep 1: Running DMA/DMS...")
+    dma_result = run_dma_dms(y=y, X=X, n_insample=n_insample,
+                              dates=dates, verbose=True)
 
-    run_all_extensions(
-        df=df, predictor_cols=PREDICTOR_COLS,
-        dma_result=dma_result, ml_results=ml_results,
-        hybrid_results=hybrid_results,
-        y=y, X=X, n_insample=n_is,
-        output_dir=output_dir,
-        run_sensitivity=True,
+    # Step 2: Run ML models
+    print("\nStep 2: Running ML models...")
+    ml_results = run_all_ml_models(y=y, X=X, n_insample=n_insample,
+                                    dates=dates, verbose=True)
+
+    # Step 3: Run hybrids
+    print("\nStep 3: Running hybrid models...")
+    hybrid_results = run_all_hybrids(
+        y=y, X=X,
+        dma_result=dma_result,
+        ml_results=ml_results,
+        n_insample=n_insample,
         dates=dates,
+        verbose=True,
     )
+
+    # Print results
+    print_hybrid_table(hybrid_results, dma_result=dma_result, ml_results=ml_results)
+    print_hybrid_descriptions(hybrid_results)

@@ -29,7 +29,7 @@ Pipeline steps
     Step 1  Build dataset          src/pipeline.py
     Step 2  DMA/DMS (h=1)          src/dma_dms.py
     Step 3  DMA/DMS (h=2,3,6)      src/dma_dms.py    [skippable with --skip_mh]
-    Step 4  ML models              src/ml_models.py
+    Step 4  ML models              src/ml_models.py   (OLS, Ridge, LASSO, EN, BayesRidge, RF, XGB, MLP)
     Step 5  Multi-horizon ML       src/ml_models.py   [skippable with --skip_mh]
     Step 6  Hybrid models          src/hybrid.py
     Step 7  Full evaluation        src/evaluation.py
@@ -40,11 +40,11 @@ Pipeline steps
 
 Estimated runtime of steps 9–11: ~6 min (9+10) + ~25 min (11) single-core.
 
-Estimated runtime (without LSTM, without multi-horizon):
-    ~5-7 minutes on a modern laptop
+Estimated runtime (without multi-horizon, without robustness steps 9-11):
+    ~10 minutes on a modern laptop
 
-Estimated runtime (full, including LSTM and multi-horizon):
-    ~20-25 minutes
+Estimated runtime (full, including multi-horizon and steps 9-11):
+    ~60 minutes
 """
 
 import argparse
@@ -88,8 +88,8 @@ def parse_args():
                    help='Number of in-sample (burn-in) observations (default: 120)')
     p.add_argument('--skip_mh',   action='store_true',
                    help='Skip multi-horizon forecasting (h=2,3,6) to save time')
-    p.add_argument('--skip_lstm', action='store_true',
-                   help='Skip LSTM model (requires PyTorch; slow on CPU)')
+    p.add_argument('--skip_mlp', action='store_true',
+                   help='Skip the feed-forward neural network (MLP, ~4 min)')
     p.add_argument('--skip_sensitivity', action='store_true',
                    help='Skip the T8 forgetting-factor grid (the only heavy extension)')
     p.add_argument('--skip_robustness', action='store_true',
@@ -136,7 +136,6 @@ def main():
     output_dir = args.output
     n_insample = args.insample
     horizons   = [int(h) for h in args.horizons.split(',')]
-    include_lstm = False
 
     # Ensure output directory exists
     Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -148,7 +147,7 @@ def main():
     print(f"  Output dir : {output_dir}")
     print(f"  In-sample  : {n_insample} months")
     print(f"  Horizons   : {horizons}")
-    print(f"  LSTM       : {'yes' if include_lstm else 'no (--skip_lstm)'}")
+    print(f"  MLP        : {'no (--skip_mlp)' if args.skip_mlp else 'yes'}")
     print(f"  Multi-horiz: {'no (--skip_mh)' if args.skip_mh else 'yes'}")
     print(f"  Robustness : {'no (--skip_robustness)' if args.skip_robustness else 'yes (steps 9-11)'}")
 
@@ -205,7 +204,7 @@ def main():
     t0 = time.time()
     ml_results = run_all_ml_models(
         y=y, X=X, n_insample=n_insample,
-        dates=dates, include_lstm=include_lstm, verbose=True,
+        dates=dates, include_mlp=not args.skip_mlp, verbose=True,
     )
     print_ml_table(ml_results, dma_result=dma_result,
                    rw_msfe=dma_result.msfe['RW'])
