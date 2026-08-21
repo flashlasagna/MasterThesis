@@ -562,7 +562,7 @@ def _collect_all_forecasts(dma_result, ml_results, hybrid_results) -> dict:
           'DMS': dma_result.dms_forecasts,
           'TVP': dma_result.tvp_forecasts}
     for name in ['OLS', 'Ridge', 'LASSO', 'ElasticNet', 'BayesianRidge',
-                 'RandomForest', 'XGBoost']:
+                 'RandomForest', 'XGBoost', 'MLP']:
         if name in ml_results and not np.isnan(ml_results[name].msfe):
             fc[name] = ml_results[name].forecasts
     for hname, label in [('PIP_ElasticNet', 'PIP-EN'),
@@ -675,7 +675,7 @@ if __name__ == '__main__':
 
     dma_result     = run_dma_dms(y=y, X=X, n_insample=n_is, dates=dates, verbose=True)
     ml_results     = run_all_ml_models(y=y, X=X, n_insample=n_is, dates=dates,
-                                       include_lstm=False, verbose=True)
+                                       verbose=True)
     hybrid_results = run_all_hybrids(y=y, X=X, dma_result=dma_result,
                                      ml_results=ml_results, n_insample=n_is,
                                      dates=dates, verbose=True)

@@ -258,7 +258,7 @@ def make_table2(dma_result, ml_results: dict, hybrid_results: dict,
 
     # ML models from 03
     ml_order = ['OLS','Ridge','LASSO','ElasticNet','BayesianRidge',
-                'RandomForest','XGBoost','LSTM']
+                'RandomForest','XGBoost','MLP']
     for name in ml_order:
         if name not in ml_results or np.isnan(ml_results[name].msfe):
             continue
@@ -645,7 +645,7 @@ def plot_f8_r2_barchart(dma_result, ml_results: dict,
 
     # ML baselines
     for name in ['OLS', 'Ridge', 'LASSO', 'ElasticNet',
-                 'BayesianRidge', 'RandomForest', 'XGBoost']:
+                 'BayesianRidge', 'RandomForest', 'XGBoost', 'MLP']:
         if name in ml_results and not np.isnan(ml_results[name].r2_oos):
             entries.append((name, ml_results[name].r2_oos, COLOURS['ml_bar']))
 
@@ -911,7 +911,7 @@ if __name__ == '__main__':
 
     print("\nRunning ML models...")
     ml_results = run_all_ml_models(y=y, X=X, n_insample=n_is,
-                                    dates=dates, include_lstm=False, verbose=True)
+                                    dates=dates, verbose=True)
 
     print("\nRunning hybrid models...")
     hybrid_results = run_all_hybrids(y=y, X=X, dma_result=dma_result,

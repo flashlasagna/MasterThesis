@@ -14,7 +14,6 @@ Models implemented
 6.  XGBoost                   — gradient boosting (best performer in weather project)
 7.  Bayesian Ridge            — probabilistic ridge with automatic hyperparameter tuning;
                                 bridges econometrics and ML (close in spirit to DMA/DMS)
-8.  LSTM                      — shallow recurrent network for temporal dependencies
 
 All models use an expanding window walk-forward scheme:
     - At OOS step i (forecasting t = n_insample + i), train on ALL data up to t.
@@ -61,12 +60,6 @@ warnings.filterwarnings("ignore")
 # Hyperparameter retuning frequency (every N out-of-sample steps)
 TUNE_EVERY = 12   # annual retuning — balances adaptability and computation
 
-# LSTM settings (conservative for small N)
-LSTM_LOOKBACK     = 12    # months of history fed as sequence
-LSTM_HIDDEN       = 16    # hidden units (deliberately small to avoid overfitting)
-LSTM_EPOCHS       = 50    # training epochs per retrain
-LSTM_LR           = 1e-3  # Adam learning rate
-LSTM_RETRAIN_EVERY = 12   # retrain every 12 OOS steps
 
 # Random Forest defaults (shallow trees to prevent overfitting on small sample)
 RF_N_ESTIMATORS  = 200
@@ -79,6 +72,12 @@ XGB_MAX_DEPTH     = 3
 XGB_LR            = 0.05
 XGB_SUBSAMPLE     = 0.8
 XGB_COLSAMPLE     = 0.8
+
+# MLP (feed-forward network) -- tuned annually by TimeSeriesSplit CV
+MLP_HIDDEN_GRID = [(8,), (16,)]
+MLP_ALPHA_GRID  = [10.0, 30.0, 100.0, 300.0, 1000.0]
+MLP_N_SEEDS     = 5
+MLP_MAX_ITER    = 500
 
 
 # ---------------------------------------------------------------------------
@@ -493,133 +492,78 @@ def run_xgboost(y: np.ndarray, X: np.ndarray, n_insample: int,
                            t0, feature_imp=imp)
 
 
-def run_lstm(y: np.ndarray, X: np.ndarray, n_insample: int,
-             dates: Optional[pd.DatetimeIndex] = None,
-             verbose: bool = True) -> MLResult:
+def run_mlp(y: np.ndarray, X: np.ndarray, n_insample: int,
+            dates: Optional[pd.DatetimeIndex] = None,
+            verbose: bool = True) -> MLResult:
     """
-    LSTM (Long Short-Term Memory) recurrent neural network.
+    Feed-forward neural network (multilayer perceptron).
 
-    Unlike the other models which treat each month independently, LSTM
-    ingests a sequence of LOOKBACK=12 months as input, allowing it to
-    learn temporal patterns across a one-year window. Architecture is
-    deliberately shallow (1 layer, 16 hidden units, dropout=0.2) given
-    the small sample size — the parameter-to-sample ratio is kept below 25.
+    Single hidden layer with ReLU activation, fitted by L-BFGS with an L2
+    weight penalty alpha. Two devices make the estimator usable on a sample
+    of a few hundred months:
+      * Seed ensembling: at every step the forecast is the average of
+        MLP_N_SEEDS networks trained from different random initialisations
+        (Gu, Kelly & Xiu 2020), which removes initialisation noise.
+      * Annual retuning: width and alpha are re-selected every TUNE_EVERY
+        steps by 3-fold expanding-window TimeSeriesSplit CV on the training
+        window only -- the protocol used for Ridge / LASSO / Elastic Net.
+    The alpha grid deliberately extends to very strong shrinkage (1000):
+    preliminary runs with alpha <= 10 overfit catastrophically (R2 < -25%),
+    and CV selected the grid boundary at every retuning point.
 
-    The model is retrained from scratch every LSTM_RETRAIN_EVERY=12 steps
-    (annually) rather than at every OOS step, trading some adaptability for
-    computational tractability.
-
-    Requires PyTorch. If torch is not installed, this function returns a
-    result filled with NaN forecasts and prints a warning.
-
-    Architecture
-    ------------
-        Input  : (batch=1, seq=12, features=18)
-        LSTM   : hidden=16, layers=1
-        Dropout: p=0.2
-        Linear : 16 -> 1
-        Output : scalar copper return forecast
+    Preferred over a recurrent network as the neural benchmark because it
+    consumes the identical one-month-lagged predictor vector as every
+    other model in the comparison; see Section 4.2.4 of the thesis.
     """
-    try:
-        import torch
-        import torch.nn as nn
-    except ImportError:
-        warnings.warn("PyTorch not installed. LSTM forecasts will be NaN. "
-                      "Install with: pip install torch")
-        T_oos = len(y) - n_insample
-        y_oos = y[n_insample:]
-        rw    = np.zeros(T_oos)
-        return MLResult(
-            model_name='LSTM',
-            forecasts=np.full(T_oos, np.nan),
-            actual=y_oos,
-            dates=dates[n_insample:] if dates is not None else None,
-            msfe=np.nan, r2_oos=np.nan, cw_stat=np.nan, cw_pval=np.nan,
-            runtime_s=0.0,
-        )
+    from sklearn.neural_network import MLPRegressor
+    import itertools, warnings as _w
 
-    # ── LSTM definition ───────────────────────────────────────────────────
-    class _LSTM(nn.Module):
-        def __init__(self, input_size, hidden_size):
-            super().__init__()
-            self.lstm    = nn.LSTM(input_size, hidden_size,
-                                   num_layers=1, batch_first=True)
-            self.dropout = nn.Dropout(0.2)
-            self.fc      = nn.Linear(hidden_size, 1)
+    T_oos = len(y) - n_insample
+    fc    = np.zeros(T_oos)
+    t0    = time.time()
+    cur   = (MLP_HIDDEN_GRID[0], MLP_ALPHA_GRID[0])
+    chosen = []
 
-        def forward(self, x):
-            out, _ = self.lstm(x)
-            return self.fc(self.dropout(out[:, -1, :])).squeeze(-1)
-
-    def _make_sequences(X_sc, y_vals, lookback):
-        Xs, ys = [], []
-        for i in range(lookback, len(y_vals)):
-            Xs.append(X_sc[i - lookback:i])
-            ys.append(y_vals[i])
-        return (np.array(Xs, dtype=np.float32),
-                np.array(ys, dtype=np.float32))
-
-    def _train(X_tr, y_tr):
-        sc   = StandardScaler()
-        Xsc  = sc.fit_transform(X_tr)
-        Xs, ys = _make_sequences(Xsc, y_tr, LSTM_LOOKBACK)
-        if len(Xs) < 5:
-            return None, sc
-        model = _LSTM(X_tr.shape[1], LSTM_HIDDEN)
-        opt   = torch.optim.Adam(model.parameters(), lr=LSTM_LR, weight_decay=1e-4)
-        loss_fn = nn.MSELoss()
-        Xt = torch.tensor(Xs)
-        yt = torch.tensor(ys)
-        model.train()
-        for _ in range(LSTM_EPOCHS):
-            opt.zero_grad()
-            loss = loss_fn(model(Xt), yt)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step()
-        model.eval()
-        return model, sc
-
-    # ── Walk-forward loop ─────────────────────────────────────────────────
-    T_oos  = len(y) - n_insample
-    fc     = np.zeros(T_oos)
-    t0     = time.time()
-    model  = None
-    sc_fit = None
+    def _ensemble_predict(Xtr, ytr, Xte, hidden, alpha):
+        preds = []
+        for s in range(MLP_N_SEEDS):
+            with _w.catch_warnings():
+                _w.simplefilter('ignore')
+                m = MLPRegressor(hidden_layer_sizes=hidden, alpha=alpha,
+                                 activation='relu', solver='lbfgs',
+                                 max_iter=MLP_MAX_ITER, random_state=s
+                                 ).fit(Xtr, ytr)
+            preds.append(m.predict(Xte))
+        return np.mean(preds, axis=0)
 
     for i in range(T_oos):
-        t = n_insample + i
+        t   = n_insample + i
+        sc  = StandardScaler()
+        Xtr = sc.fit_transform(X[:t]); Xte = sc.transform(X[t:t+1]); ytr = y[:t]
 
-        # Retrain from scratch every LSTM_RETRAIN_EVERY steps
-        if i % LSTM_RETRAIN_EVERY == 0 or model is None:
-            model, sc_fit = _train(X[:t], y[:t])
+        if i % TUNE_EVERY == 0:
+            best, best_mse = cur, np.inf
+            for hidden, alpha in itertools.product(MLP_HIDDEN_GRID, MLP_ALPHA_GRID):
+                mse = 0.0
+                for tr, va in TimeSeriesSplit(n_splits=3).split(Xtr):
+                    p = _ensemble_predict(Xtr[tr], ytr[tr], Xtr[va], hidden, alpha)
+                    mse += np.mean((ytr[va] - p)**2)
+                if mse < best_mse:
+                    best, best_mse = (hidden, alpha), mse
+            cur = best
+            chosen.append({'oos_step': i, 'hidden': str(cur[0]), 'alpha': cur[1]})
 
-        if model is None or t < LSTM_LOOKBACK:
-            fc[i] = 0.0
-            continue
-
-        # Predict using last LOOKBACK months
-        Xsc   = sc_fit.transform(X[:t])
-        x_seq = torch.tensor(
-            Xsc[-LSTM_LOOKBACK:].reshape(1, LSTM_LOOKBACK, X.shape[1]),
-            dtype=torch.float32)
-        with torch.no_grad():
-            fc[i] = float(model(x_seq).item())
+        fc[i] = float(_ensemble_predict(Xtr, ytr, Xte, *cur)[0])
 
     if verbose:
-        y_oos = y[n_insample:]
-        rw_fc = np.zeros(T_oos)
-        err   = y_oos - fc
-        r2    = _r2_oos(err, y_oos - rw_fc)
-        print(f"  LSTM:         R2={r2:.4f}  t={time.time()-t0:.1f}s")
+        print(f"  MLP:          R2={_r2_oos(y[n_insample:]-fc, y[n_insample:]):.4f}"
+              f"  t={time.time()-t0:.1f}s")
 
-    return _package_result('LSTM', fc, y[n_insample:],
-                           dates[n_insample:] if dates is not None else None, t0)
+    res = _package_result('MLP', fc, y[n_insample:],
+                          dates[n_insample:] if dates is not None else None, t0)
+    res.chosen_params = pd.DataFrame(chosen)
+    return res
 
-
-# ---------------------------------------------------------------------------
-# Historical average benchmark
-# ---------------------------------------------------------------------------
 
 def run_historical_average(y: np.ndarray, X: np.ndarray, n_insample: int,
                             dates: Optional[pd.DatetimeIndex] = None,
@@ -657,7 +601,7 @@ def run_all_ml_models(y: np.ndarray,
                       X: np.ndarray,
                       n_insample: int,
                       dates: Optional[pd.DatetimeIndex] = None,
-                      include_lstm: bool = True,
+                      include_mlp: bool = True,
                       verbose: bool = True) -> dict:
     """
     Run all ML models sequentially and return results as a dict.
@@ -668,7 +612,6 @@ def run_all_ml_models(y: np.ndarray,
     X           : np.ndarray (T, k)  predictor matrix (k=18, no intercept)
     n_insample  : int                burn-in / in-sample observations
     dates       : pd.DatetimeIndex   aligned date index for y
-    include_lstm: bool               whether to run LSTM (requires PyTorch)
     verbose     : bool               print progress
 
     Returns
@@ -694,8 +637,8 @@ def run_all_ml_models(y: np.ndarray,
         ('RandomForest',  run_random_forest),
         ('XGBoost',       run_xgboost),
     ]
-    if include_lstm:
-        runners.append(('LSTM', run_lstm))
+    if include_mlp:
+        runners.append(('MLP', run_mlp))
 
     results = {}
     for name, fn in runners:
@@ -830,10 +773,9 @@ if __name__ == '__main__':
 
     n_insample = 120
 
-    # Run all models (LSTM requires PyTorch)
     results = run_all_ml_models(
         y=y, X=X, n_insample=n_insample,
-        dates=dates, include_lstm=True, verbose=True
+        dates=dates, verbose=True
     )
 
     # Print consolidated table
