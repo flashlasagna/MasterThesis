@@ -1,0 +1,8 @@
+Period,N,DMA,ElasticNet,Combo (equal weight),"Recent winner, 6m","Recent winner, 12m","Recent winner, 24m","Recent winner, 36m","Recent winner, expanding","Discounted MSFE weights, delta=0.90","Discounted MSFE weights, delta=0.95","Discounted MSFE weights, delta=1.00","VIX state, fixed direction (ex post)","VIX state, direction learned in real time",Oracle: best model per sub-period,Oracle: best model each month
+Pre-GFC,6,-11.32,6.72,-0.95,-0.95,-0.95,-0.95,-0.95,-0.95,-0.95,-0.95,-0.95,-14.05,-0.95,6.72,10.72
+GFC,10,47.95,50.68,50.35,50.68,50.68,50.68,50.68,50.68,50.21,50.23,50.25,50.22,45.91,50.68,59.22
+Recovery,126,23.83,14.63,21.18,23.01,18.29,17.92,19.2,19.14,21.2,21.2,21.15,22.06,18.59,23.83,34.38
+COVID-19,12,26.28,50.35,42.68,40.54,40.17,19.91,34.45,26.28,42.19,42.15,42.41,47.42,40.31,50.35,66.24
+Supercycle,12,21.21,14.38,18.62,10.61,16.06,14.38,14.38,21.21,18.3,18.36,18.64,24.89,24.89,21.21,28.89
+Ukraine shock,12,37.16,27.05,33.29,37.16,37.16,30.76,27.05,37.16,33.33,33.21,33.34,33.24,33.24,37.16,42.88
+Post-shock,38,3.26,8.23,6.18,2.71,6.01,4.81,4.56,3.26,6.1,6.13,6.15,3.37,3.37,8.23,14.76

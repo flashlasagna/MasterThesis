@@ -33,7 +33,7 @@ Pipeline steps
     Step 5  Multi-horizon ML       src/ml_models.py   [skippable with --skip_mh]
     Step 6  Hybrid models          src/hybrid.py
     Step 7  Full evaluation        src/evaluation.py
-    Step 8  Tier-1 extensions      src/extensions.py   (T7–T10, T13)
+    Step 8  Tier-1 extensions      src/extensions.py   (T7–T10, T13, T17, T20–T22, F13–F14)
     Step 9  Real-time availability src/realtime.py     (T11)       [skippable with --skip_robustness]
     Step 10 Omega estimation       src/omega.py        (T12)       [skippable with --skip_robustness]
     Step 11 Tree hyperparameters   src/tree_tuning.py  (T14)       [skippable with --skip_robustness / --skip_tree_tuning]
@@ -363,10 +363,10 @@ def main():
         print(f"    Combo DMA+EN      :  {hybrid_results['Combo_DMA_EN'].r2_oos*100:.2f}%")
     print(f"    Random Walk       :   0.00%  (benchmark)")
     print()
-    print("  Tables saved  : T1–T10, T13 (.csv)"
+    print("  Tables saved  : T1–T10, T13, T17, T20–T22 (.csv)"
           + ("" if args.skip_robustness else ", T11, T12, T16")
           + ("" if (args.skip_robustness or args.skip_tree_tuning) else ", T14"))
-    print("  Figures saved : F1–F11 (.pdf)")
+    print("  Figures saved : F1–F14 (.pdf)")
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,16 @@
+Strategy,Type,MSFE,R2_oos (%),R2 excl. warm-up (%),HLN vs DMA,p vs DMA,HLN vs Combo,p vs Combo,Switches,Share DMA (%)
+DMA,Single model,23.427,30.16,30.93,0.0,1.0,0.51,0.613,,
+ElasticNet,Single model,23.816,29.01,29.42,0.29,0.77,1.06,0.292,,
+Combo (equal weight),No selection,23.096,31.15,31.75,-0.51,0.613,0.0,1.0,,
+"Recent winner, 6m",Real-time,22.982,31.49,32.09,-0.41,0.684,-0.17,0.863,35.0,50.0
+"Recent winner, 12m",Real-time,23.444,30.11,30.69,0.01,0.988,0.52,0.601,29.0,55.6
+"Recent winner, 24m",Real-time,24.136,28.05,28.59,0.66,0.507,1.52,0.131,19.0,59.3
+"Recent winner, 36m",Real-time,23.735,29.25,29.81,0.26,0.793,0.95,0.341,17.0,59.7
+"Recent winner, expanding",Real-time,23.675,29.43,29.99,0.24,0.813,0.84,0.4,6.0,85.2
+"Discounted MSFE weights, delta=0.90",Real-time,23.125,31.06,31.66,-0.45,0.653,0.61,0.546,,50.5
+"Discounted MSFE weights, delta=0.95",Real-time,23.125,31.07,31.66,-0.45,0.652,0.72,0.47,,50.5
+"Discounted MSFE weights, delta=1.00",Real-time,23.117,31.09,31.68,-0.46,0.645,0.64,0.523,,50.3
+"VIX state, fixed direction (ex post)",Hindsight direction,22.997,31.45,32.29,-0.37,0.711,-0.15,0.882,29.0,79.2
+"VIX state, direction learned in real time",Real-time,24.01,28.43,28.97,0.55,0.583,1.45,0.148,32.0,71.8
+Oracle: best model per sub-period,Infeasible,22.319,33.47,33.96,-1.01,0.312,-1.19,0.236,4.0,69.4
+Oracle: best model each month,Infeasible,19.189,42.8,43.39,-5.14,0.0,-7.46,0.0,109.0,50.0

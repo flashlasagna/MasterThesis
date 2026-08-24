@@ -63,8 +63,8 @@ MasterThesis/
 │   ├── 02_dma_dms.py                # DMA/DMS Kalman filter engine (+ model-probability diagnostics)
 │   ├── 03_ml_models.py              # ML models incl. feed-forward network (run_mlp)
 │   ├── 04_hybrid.py                 # Hybrid DMA-ML framework
-│   ├── 05_evaluation.py             # Tables T1–T6, figures F1–F13
-│   ├── 06_extensions.py             # T7–T10, T13, T17, T20, T21, figures F11, F13
+│   ├── 05_evaluation.py             # Tables T1–T6, figures F1–F14
+│   ├── 06_extensions.py             # T7–T10, T13, T17, T20–T22, figures F11, F13, F14
 │   ├── 07_realtime.py               # T11 real-time availability of predictors
 │   ├── 08_omega.py                  # T12 forward alignment factor (burn-in / recursive)
 │   ├── 09_tree_tuning.py            # T14 tree hyperparameter validation & sensitivity
@@ -76,8 +76,8 @@ MasterThesis/
 │
 └── output/                          # Generated automatically on first run
     ├── _cache_results.pkl           # Forecasts cache used by rerun_outputs.py
-    ├── T1_summary_stats.csv         ...  T21_regime_table.csv   (see table below)
-    └── F1_copper_price_returns.pdf  ...  F13_rolling_r2_regimes.pdf
+    ├── T1_summary_stats.csv         ...  T22_realtime_selection.csv (see table below)
+    └── F1_copper_price_returns.pdf  ...  F14_selection_path.pdf
 ```
 
 ---
@@ -150,7 +150,7 @@ All tables (`.csv`) and figures (`.pdf`) are saved to `output/`.
 | 5 | `03_ml_models.py` | Multi-horizon Elastic Net | ~15s |
 | 6 | `04_hybrid.py` | PIP-EN, Stacking, Equal-weight combo; results cached | ~5s |
 | 7 | `05_evaluation.py` | Tables T1–T6, figures F1–F10, F12 (rolling hit rate) | ~15s |
-| 8 | `06_extensions.py` | T7 DM-HLN, T17 DM power, T8 forgetting factors, T9 directional, T13 DMA-vs-DMS, T20 horizon decomposition, T21 regimes, T10 correlation; figures F11, F13 | ~13min (T8) / ~1min without |
+| 8 | `06_extensions.py` | T7 DM-HLN, T17 DM power, T8 forgetting factors, T9 directional, T13 DMA-vs-DMS, T20 horizon decomposition, T21 regimes, T22 real-time selection, T10 correlation; figures F11, F13, F14 | ~13min (T8) / ~1min without |
 | 9 | `07_realtime.py` | T11 real-time availability (publication-lag and market-only panels) | ~3min |
 | 10 | `08_omega.py` | T12 burn-in and recursive forward alignment factor | ~3min |
 | 11 | `09_tree_tuning.py` | T14 CV-tuned RF/XGB and hyperparameter sensitivity surfaces | ~25min |
@@ -168,7 +168,7 @@ All tables (`.csv`) and figures (`.pdf`) are saved to `output/`.
 | T4 | Hybrid model results | Table 5 |
 | T5 | Sub-period R² | Table 7 |
 | T6 | Feature importance (DMA PIP, RF, XGB) | Appendix Table 1 |
-| T7 | Pairwise Diebold-Mariano (HLN) | Table 3, Panel A |
+| T7 / T7b (`_all`) | Pairwise Diebold-Mariano (HLN) | Table 3, Panel A |
 | T8 | Forgetting-factor grid | Table 8 |
 | T9 | Directional accuracy, Pesaran-Timmermann | Table 4 |
 | T10 | Predictor correlation matrix | Figure A12 |
@@ -183,9 +183,11 @@ All tables (`.csv`) and figures (`.pdf`) are saved to `output/`.
 | T19 | Rolling and sub-period hit rates | §5.4 table, F12 |
 | T20 | Horizon decomposition: dilution benchmark, single-month targets | §5.6 table |
 | T21 | Predictability by regime: ex-post crisis share, ex-ante VIX / vol classifiers, rolling R² | §5.7 table, F13 |
+| T22 | Ex-post regime ranking vs real-time selection between DMA and Elastic Net: recent-winner, discounted-MSFE and VIX-state rules, sub-period and monthly oracles; sub-period R² and monthly selection path | §5.7, Appendix table, F14 |
 | F1–F11 | As in the original pipeline | Figures 1–5, A1–A12 |
 | F12 | 36-month rolling hit rate and cumulative correct calls | Figure 6 |
 | F13 | 36-month rolling R² with crisis shading and ex-ante high-VIX months | Figure 7 |
+| F14 | Monthly model choice of two real-time selection rules against the ex-post monthly winner | Appendix figure |
 
 ---
 

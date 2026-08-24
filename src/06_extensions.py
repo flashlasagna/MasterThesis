@@ -30,6 +30,12 @@ T9  Directional accuracy / hit-rate + Pesaran-Timmermann test
         Delivers on the "valuable to traders/hedgers" promise in the intro.
         Exact-zero forecasts are scored as MISSES (conservative convention).
 
+T22 Ex-post regime ranking vs real-time model selection
+        Whether the regime-specific ranking of DMA and Elastic Net in
+        Table 5 could have been exploited with information available at
+        the forecast origin: recent-winner and discounted-MSFE rules,
+        VIX-state rules, and two infeasible oracles as upper bounds.
+
 T10 Predictor correlation matrix
         Pairwise correlations among the 18 predictors. Supports the
         Elastic-Net grouping discussion and motivates why model averaging
@@ -183,7 +189,8 @@ def diebold_mariano_hln(errors_a: np.ndarray,
 def make_table7_dm(forecasts: dict,
                    actual: np.ndarray,
                    output_dir: str,
-                   h: int = 1) -> pd.DataFrame:
+                   h: int = 1,
+                   suffix: str = '') -> pd.DataFrame:
     """
     T7: Pairwise HLN-corrected Diebold-Mariano matrix among the top models.
 
@@ -233,10 +240,10 @@ def make_table7_dm(forecasts: dict,
                 })
 
     long_df = pd.DataFrame(long_rows)
-    long_df.to_csv(os.path.join(output_dir, 'T7_dm_pairwise.csv'), index=False)
-    stat_mat.to_csv(os.path.join(output_dir, 'T7_dm_stat_matrix.csv'))
-    pval_mat.to_csv(os.path.join(output_dir, 'T7_dm_pval_matrix.csv'))
-    print("  T7 saved (pairwise DM-HLN: long form + stat/pval matrices)")
+    long_df.to_csv(os.path.join(output_dir, f'T7_dm_pairwise{suffix}.csv'), index=False)
+    stat_mat.to_csv(os.path.join(output_dir, f'T7_dm_stat_matrix{suffix}.csv'))
+    pval_mat.to_csv(os.path.join(output_dir, f'T7_dm_pval_matrix{suffix}.csv'))
+    print(f"  T7{suffix} saved (pairwise DM-HLN: long form + stat/pval matrices)")
     return long_df
 
 
@@ -433,6 +440,201 @@ def make_table21_regimes(df: pd.DataFrame, dma_result, ml_results: dict,
                  ).to_csv(os.path.join(output_dir, 'T21_regime_forecasts.csv'), index=False)
     roll.to_csv(os.path.join(output_dir, 'T21_rolling_r2.csv'))
     print("  T21 saved (regime table, flags, rolling R2)")
+    return tab
+
+
+# ===========================================================================
+# T22 — Ex-post regime interpretation vs real-time model selection
+# ===========================================================================
+
+SUBPERIODS_T22 = [('Pre-GFC',       '2008-03-01', '2008-08-01'),
+                  ('GFC',           '2008-09-01', '2009-06-01'),
+                  ('Recovery',      '2009-07-01', '2019-12-01'),
+                  ('COVID-19',      '2020-01-01', '2020-12-01'),
+                  ('Supercycle',    '2021-01-01', '2021-12-01'),
+                  ('Ukraine shock', '2022-01-01', '2022-12-01'),
+                  ('Post-shock',    '2023-01-01', '2026-02-01')]
+
+
+def make_table22_realtime_selection(dma_result, ml_results: dict, hybrid_results: dict,
+                                    output_dir: str, windows=(6, 12, 24, 36),
+                                    deltas=(0.90, 0.95, 1.00), warm_up: int = 6,
+                                    min_state_obs: int = 6,
+                                    stress_flag: Optional[np.ndarray] = None) -> pd.DataFrame:
+    """
+    T22: can the regime-specific ranking of DMA and Elastic Net (Table 5)
+    be exploited in real time?
+
+    The sub-period analysis shows Elastic Net ahead in the two V-shaped
+    shocks (GFC, COVID-19) and DMA ahead in the gradual recovery and the
+    2022 realignment. That ranking is known only ex post. This table asks
+    what a forecaster could have earned from it using information available
+    at each forecast origin, and bounds the answer from above with two
+    oracles that use future information.
+
+    Selection rules (all use forecast errors realised strictly BEFORE the
+    origin t; the first `warm_up` origins, which have no history, use the
+    equal-weight combination):
+      (i)   Recent winner, k months: the model with the lower MSFE over the
+            last k realised errors (k in `windows`), and over the full
+            expanding history.
+      (ii)  Discounted-MSFE weights (Stock & Watson, 2004): weights inversely
+            proportional to the delta-discounted sum of past squared errors.
+      (iii) VIX-state rule, fixed direction: Elastic Net when the ex-ante VIX
+            flag of T21 is on, DMA otherwise. The DIRECTION of this rule is
+            taken from Table 21, i.e. it is chosen with hindsight; it is
+            reported to show the ceiling of a state-based switch, not as a
+            feasible rule.
+      (iv)  VIX-state rule, direction learned in real time: within the
+            current VIX state, the model with the lower MSFE over all past
+            origins in the same state (equal weight until `min_state_obs`
+            such origins exist). Fully feasible.
+    Oracles (infeasible, upper bounds):
+      (v)   Best model in each sub-period of Table 5, chosen ex post.
+      (vi)  Best model in each month, chosen ex post.
+
+    Every strategy is compared with DMA and with the equal-weight
+    combination by the HLN-corrected Diebold-Mariano test of T7 (h = 1).
+
+    Outputs
+    -------
+    T22_realtime_selection.csv     headline table (R2, MSFE, DM vs DMA/Combo,
+                                   number of switches, share of months on DMA)
+    T22_selection_subperiod.csv    sub-period R2 of each strategy
+    T22_selection_path.csv         monthly choice of each rule and the ex-post
+                                   winner (for F14)
+    """
+    _ensure_dir(output_dir)
+    y = np.asarray(dma_result.actual, dtype=float); N = len(y)
+    d = pd.DatetimeIndex(dma_result.dates)
+    f_dma = np.asarray(dma_result.dma_forecasts, dtype=float)
+    f_en  = np.asarray(ml_results['ElasticNet'].forecasts, dtype=float)
+    if 'Combo_DMA_EN' in hybrid_results:
+        f_cmb = np.asarray(hybrid_results['Combo_DMA_EN'].forecasts, dtype=float)
+    else:
+        f_cmb = 0.5 * (f_dma + f_en)
+    e_dma, e_en = (y - f_dma)**2, (y - f_en)**2
+
+    if stress_flag is None:
+        p_flag = os.path.join(output_dir, 'T21_regime_forecasts.csv')
+        if os.path.exists(p_flag):
+            stress_flag = pd.read_csv(p_flag)['hi_vix'].values.astype(bool)
+        else:
+            print("  T22: T21_regime_forecasts.csv not found; VIX-state rules skipped")
+    hi = None if stress_flag is None else np.asarray(stress_flag, dtype=bool)
+
+    def _r2(f, yy): return 100.0 * (1.0 - np.sum((yy - f)**2) / np.sum(yy**2))
+
+    # ── selection rules ───────────────────────────────────────────────────
+    def recent_winner(k=None):
+        fc = f_cmb.copy(); pick = np.full(N, 'Combo', dtype=object)
+        for t in range(warm_up, N):
+            lo = 0 if k is None else max(0, t - k)
+            use_dma = e_dma[lo:t].mean() <= e_en[lo:t].mean()
+            fc[t] = f_dma[t] if use_dma else f_en[t]
+            pick[t] = 'DMA' if use_dma else 'EN'
+        return fc, pick
+
+    def discounted_weights(delta):
+        fc = f_cmb.copy(); w = np.full(N, 0.5)
+        for t in range(warm_up, N):
+            disc = delta ** np.arange(t - 1, -1, -1)
+            s_dma, s_en = np.sum(disc * e_dma[:t]), np.sum(disc * e_en[:t])
+            w[t] = (1.0 / s_dma) / (1.0 / s_dma + 1.0 / s_en)
+            fc[t] = w[t] * f_dma[t] + (1.0 - w[t]) * f_en[t]
+        return fc, w
+
+    def vix_fixed():
+        pick = np.where(hi, 'EN', 'DMA').astype(object)
+        return np.where(hi, f_en, f_dma), pick
+
+    def vix_learned():
+        fc = f_cmb.copy(); pick = np.full(N, 'Combo', dtype=object)
+        for t in range(warm_up, N):
+            same = hi[:t] == hi[t]
+            if same.sum() < min_state_obs:
+                continue
+            use_dma = e_dma[:t][same].mean() <= e_en[:t][same].mean()
+            fc[t] = f_dma[t] if use_dma else f_en[t]
+            pick[t] = 'DMA' if use_dma else 'EN'
+        return fc, pick
+
+    def oracle_subperiod():
+        fc = f_cmb.copy(); pick = np.full(N, 'Combo', dtype=object)
+        for _, a, b in SUBPERIODS_T22:
+            m = (d >= a) & (d <= b)
+            if m.sum() == 0:
+                continue
+            use_dma = e_dma[m].sum() <= e_en[m].sum()
+            fc[m] = f_dma[m] if use_dma else f_en[m]
+            pick[m] = 'DMA' if use_dma else 'EN'
+        return fc, pick
+
+    def oracle_month():
+        use_dma = e_dma <= e_en
+        return np.where(use_dma, f_dma, f_en), np.where(use_dma, 'DMA', 'EN').astype(object)
+
+    strategies = [('DMA',                          'Single model',    f_dma, None),
+                  ('ElasticNet',                   'Single model',    f_en,  None),
+                  ('Combo (equal weight)',         'No selection',    f_cmb, None)]
+    for k in windows:
+        strategies.append((f'Recent winner, {k}m', 'Real-time', *recent_winner(k)))
+    strategies.append(('Recent winner, expanding', 'Real-time', *recent_winner(None)))
+    for dl in deltas:
+        strategies.append((f'Discounted MSFE weights, delta={dl:.2f}', 'Real-time',
+                           *discounted_weights(dl)))
+    if hi is not None:
+        strategies.append(('VIX state, fixed direction (ex post)', 'Hindsight direction',
+                           *vix_fixed()))
+        strategies.append(('VIX state, direction learned in real time', 'Real-time',
+                           *vix_learned()))
+    strategies.append(('Oracle: best model per sub-period', 'Infeasible', *oracle_subperiod()))
+    strategies.append(('Oracle: best model each month',     'Infeasible', *oracle_month()))
+
+    rows, paths = [], {'date': d}
+    for name, kind, fc, pick in strategies:
+        dm_d = diebold_mariano_hln(y - fc, y - f_dma, h=1)
+        dm_c = diebold_mariano_hln(y - fc, y - f_cmb, h=1)
+        if pick is None:
+            n_sw, share = np.nan, np.nan
+        elif pick.dtype == object:
+            n_sw = int(np.sum(pick[1:] != pick[:-1]))
+            share = 100.0 * np.mean(pick == 'DMA')
+            paths[name] = pick
+        else:                                   # continuous weights
+            n_sw = np.nan; share = 100.0 * np.mean(pick)
+        rows.append({'Strategy': name, 'Type': kind,
+                     'MSFE': round(float(np.mean((y - fc)**2)), 3),
+                     'R2_oos (%)': round(_r2(fc, y), 2),
+                     'R2 excl. warm-up (%)': round(_r2(fc[warm_up:], y[warm_up:]), 2),
+                     'HLN vs DMA': round(dm_d['hln_stat'], 2), 'p vs DMA': round(dm_d['p_value'], 3),
+                     'HLN vs Combo': round(dm_c['hln_stat'], 2), 'p vs Combo': round(dm_c['p_value'], 3),
+                     'Switches': n_sw, 'Share DMA (%)': None if share != share else round(share, 1)})
+    tab = pd.DataFrame(rows)
+
+    sub_rows = []
+    for pname, a, b in SUBPERIODS_T22:
+        m = (d >= a) & (d <= b)
+        if m.sum() < 3:
+            continue
+        row = {'Period': pname, 'N': int(m.sum())}
+        for name, _, fc, _ in strategies:
+            row[name] = round(_r2(fc[m], y[m]), 2)
+        sub_rows.append(row)
+    sub = pd.DataFrame(sub_rows)
+
+    paths['ex_post_winner'] = np.where(e_dma <= e_en, 'DMA', 'EN')
+    paths['crisis'] = np.zeros(N, bool)
+    for a, b in CRISIS_WINDOWS:
+        paths['crisis'] |= (d >= a) & (d <= b)
+    if hi is not None:
+        paths['hi_vix'] = hi
+    path = pd.DataFrame(paths)
+
+    tab.to_csv(os.path.join(output_dir, 'T22_realtime_selection.csv'), index=False)
+    sub.to_csv(os.path.join(output_dir, 'T22_selection_subperiod.csv'), index=False)
+    path.to_csv(os.path.join(output_dir, 'T22_selection_path.csv'), index=False)
+    print("  T22 saved (real-time selection, sub-period R2, selection path)")
     return tab
 
 
@@ -819,6 +1021,21 @@ def run_all_extensions(df: pd.DataFrame,
     out['T7'] = make_table7_dm(top_fc, actual, output_dir, h=1)
     print(out['T7'].to_string(index=False))
 
+    # ── T7b: pairwise DM-HLN across model classes ────────────────────────
+    #     Non-nested comparisons only (every model here is a distinct
+    #     estimator, none a restricted case of another), so the plain
+    #     DM/HLN test applies, as for T7. Documents which parts of the
+    #     point-estimate ordering in Table 2 are statistically supported:
+    #     linear-vs-XGBoost and Ridge-vs-OLS are, linear-vs-RandomForest
+    #     and DMA-vs-DMS are not.
+    print("\nT7b: Pairwise Diebold-Mariano across model classes")
+    class_fc = {'DMA': dma_result.dma_forecasts, 'DMS': dma_result.dms_forecasts}
+    for name in ['OLS', 'Ridge', 'ElasticNet', 'RandomForest', 'XGBoost', 'MLP']:
+        if name in ml_results and not np.isnan(ml_results[name].msfe):
+            class_fc[name] = ml_results[name].forecasts
+    out['T7b'] = make_table7_dm(class_fc, actual, output_dir, h=1, suffix='_all')
+    print(out['T7b'].to_string(index=False))
+
     # ── T17: power of the pairwise DM tests ───────────────────────────────
     print("\nT17: Minimum detectable difference for the DM tests")
     out['T17'] = make_table17_dm_power(top_fc, actual, output_dir)
@@ -847,6 +1064,12 @@ def run_all_extensions(df: pd.DataFrame,
                                       n_insample, output_dir)
     print(out['T21'].to_string(index=False))
 
+    # ── T22: ex-post regime ranking vs real-time model selection ──────────
+    print("\nT22: Real-time selection between DMA and Elastic Net")
+    out['T22'] = make_table22_realtime_selection(dma_result, ml_results, hybrid_results,
+                                                 output_dir)
+    print(out['T22'].to_string(index=False))
+
     # ── T10: predictor correlation matrix ────────────────────────────────
     print("\nT10: Predictor correlation matrix")
     out['T10'] = make_table10_correlation(df, predictor_cols, output_dir)
@@ -867,6 +1090,13 @@ def run_all_extensions(df: pd.DataFrame,
         plot_f13_rolling_r2_regimes(dma_result, output_dir)
     except Exception as exc:
         print(f"  [warning] F13 not produced: {exc}")
+
+    # ── F14: real-time selection path vs ex-post winner (needs T22) ───────
+    try:
+        from src.evaluation import plot_f14_selection_path
+        plot_f14_selection_path(output_dir)
+    except Exception as exc:
+        print(f"  [warning] F14 not produced: {exc}")
 
     print("\nAll Tier-1 extensions complete. Outputs in:", output_dir)
     return out

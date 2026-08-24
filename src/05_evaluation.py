@@ -663,6 +663,56 @@ def plot_f13_rolling_r2_regimes(dma_result, output_dir: str, window: int = 36) -
         _save_fig(fig, os.path.join(output_dir, 'F13_rolling_r2_regimes.png'))
 
 
+def plot_f14_selection_path(output_dir: str) -> None:
+    """
+    F14: which of DMA and Elastic Net a real-time selection rule would have
+    used at each origin, against the model that actually had the lower
+    squared error that month (ex post). Reads T22_selection_path.csv
+    written by make_table22_realtime_selection; silently skips if absent.
+    Top panel: 12-month recent-winner rule. Middle panel: VIX-state rule
+    with the direction learned in real time. Bottom: ex-post monthly winner.
+    Crisis windows are shaded; ex-ante high-VIX months are ticked.
+    """
+    p_path = os.path.join(output_dir, 'T22_selection_path.csv')
+    if not os.path.exists(p_path):
+        print("    F14 skipped: run make_table22_realtime_selection first"); return
+    path = pd.read_csv(p_path, parse_dates=['date'])
+    d = pd.DatetimeIndex(path['date'])
+    rows = [('Recent winner, 12m',                        'Recent-winner rule (12 months)'),
+            ('VIX state, direction learned in real time', 'VIX-state rule (direction learned)'),
+            ('ex_post_winner',                            'Ex-post winner (lower squared error)')]
+    rows = [(c, lab) for c, lab in rows if c in path]
+    code = {'DMA': 1.0, 'EN': 0.0, 'Combo': 0.5}
+    with plt.rc_context(THESIS_STYLE):
+        fig, axes = plt.subplots(len(rows), 1, figsize=(12, 1.5 * len(rows) + 0.8), sharex=True)
+        axes = np.atleast_1d(axes)
+        for ax, (col, lab) in zip(axes, rows):
+            v = path[col].map(code).values
+            ax.fill_between(d, 0, v, step='mid', color=COLOURS['dma'], alpha=0.55, lw=0,
+                            label='DMA')
+            ax.fill_between(d, v, 1, step='mid', color=COLOURS['en'], alpha=0.45, lw=0,
+                            label='Elastic Net')
+            for k, (s, e, _) in enumerate(EVENTS):
+                ax.axvspan(pd.Timestamp(s), pd.Timestamp(e), facecolor='none',
+                           edgecolor=COLOURS['actual'], hatch='///', lw=0.8, zorder=3,
+                           label='Crisis window (ex post)' if (ax is axes[0] and k == 0) else None)
+            ax.set_ylim(0, 1); ax.set_yticks([]); ax.grid(False)
+            ax.set_ylabel(lab, rotation=0, ha='right', va='center', fontsize=8.5)
+        if 'hi_vix' in path:
+            axes[-1].vlines(d[path['hi_vix'].values.astype(bool)], -0.18, -0.04,
+                            color=COLOURS['actual'], lw=1.0, clip_on=False,
+                            label='VIX$_{t-1}$ above expanding 75th pct (ex ante)')
+        axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+        h0, l0 = axes[0].get_legend_handles_labels(); h1, l1 = axes[-1].get_legend_handles_labels()
+        seen, hh, ll = set(), [], []
+        for h, l in zip(h0 + h1, l0 + l1):
+            if l not in seen:
+                seen.add(l); hh.append(h); ll.append(l)
+        fig.legend(hh, ll, loc='upper center', ncol=4, fontsize=8, framealpha=0.85,
+                   bbox_to_anchor=(0.5, 1.02))
+        _save_fig(fig, os.path.join(output_dir, 'F14_selection_path.png'))
+
+
 def plot_f5_scatter_dma(dma_result, output_dir: str) -> None:
     """F5: Scatter plot of DMA predicted vs actual returns."""
     dma_fc = dma_result.dma_forecasts
